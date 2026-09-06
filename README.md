@@ -1,6 +1,6 @@
 # Elementa Web
 
-A garbage TypeScript port of Elementa and Vigilance for the browser.
+A garbage TypeScript port of Elementa and Vigilance for the browser created solely for [wardrobes.gg](https://wardrobes.gg)
 
 Elementa's constraint system and component model, and Vigilance's settings
 screen, written again to run on a page.

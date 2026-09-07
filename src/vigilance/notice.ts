@@ -132,3 +132,50 @@ export function notice(root: UIComponent, palette: Palette, options: NoticeOptio
 
   return scrim
 }
+
+export interface QuestionOptions {
+  title: string
+  yes: string
+  no: string
+  onNo: () => void
+}
+
+export function question(
+  root: UIComponent,
+  palette: Palette,
+  options: QuestionOptions,
+): UIComponent {
+  const { scrim, panel, dismiss } = dialog(root, palette, {
+    width: atMost(percent(0.94), pixels(260)),
+    height: plus(childBasedSize(), pixels(28)),
+  })
+
+  const column = new UIContainer()
+    .constrain({
+      x: center(),
+      y: pixels(14),
+      width: minus(percent(1), pixels(28)),
+      height: childBasedSize(),
+    })
+    .childOf(panel)
+
+  new UIText(options.title, { color: palette.textHighlight, scale: 1.1 })
+    .constrain({ x: center(), y: pixels(0) })
+    .childOf(column)
+    .effect(new RiseEffect(AFTER_BOX))
+
+  const row = new UIContainer()
+    .constrain({ x: center(), y: sibling(14), width: childBasedSize(6), height: pixels(15) })
+    .childOf(column)
+  row.effect(new RiseEffect(AFTER_BOX + 1))
+
+  pressable(palette, options.yes, 54, dismiss).constrain({ y: pixels(0) }).childOf(row)
+  pressable(palette, options.no, 108, () => {
+    options.onNo()
+    dismiss()
+  })
+    .constrain({ x: sibling(6), y: pixels(0) })
+    .childOf(row)
+
+  return scrim
+}

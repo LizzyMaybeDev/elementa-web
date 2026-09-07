@@ -87,6 +87,8 @@ export class ShowEffect extends Effect {
 
 const REACH = 150
 
+const RECOLOUR = 0.4
+
 const ARRIVE_SECONDS = 0.85
 const ARRIVE_FROM = 14
 const LEAVE_SECONDS = 0.3
@@ -130,6 +132,13 @@ function style(): void {
     @keyframes arrive-up { from { opacity: 0; transform: translateY(${ARRIVE_FROM}px) } }
     @keyframes appear { from { opacity: 0 } }
     @keyframes fade { to { opacity: 0 } }
+    .recolouring, .recolouring * {
+      transition:
+        background-color ${RECOLOUR}s ease,
+        color ${RECOLOUR}s ease,
+        outline-color ${RECOLOUR}s ease,
+        text-shadow ${RECOLOUR}s ease !important;
+    }
     .waiting { opacity: 0 }
     .arrived { animation: arrive ${ARRIVE_SECONDS}s cubic-bezier(0.22, 1, 0.36, 1) both }
     .arrived.from-below { animation-name: arrive-up }
@@ -142,8 +151,6 @@ function style(): void {
     .enters { animation: enter-side ${ARRIVE_SECONDS}s cubic-bezier(0.22, 1, 0.36, 1) both }
     .exits { animation: enter-side ${LEAVE_SECONDS}s ease-in reverse both !important }
     .draining { animation: drain linear both }
-    
-    
     @keyframes swell {
       from { transform: translate(-50%, -50%) scale(0) }
       to { transform: translate(-50%, -50%) scale(1) }
@@ -158,7 +165,6 @@ function style(): void {
     .ripple {
       position: absolute;
       pointer-events: none;
-      
       background: radial-gradient(
         circle closest-side at 50% 50%,
         rgba(255, 255, 255, 0) 40%,
@@ -175,8 +181,6 @@ function style(): void {
         swell ${WASH_SECONDS}s cubic-bezier(0.22, 0.86, 0.24, 1) both,
         dim ${WASH_SECONDS}s linear both;
     }
-
-    
     @keyframes bloom {
       from { transform: translate(-50%, -50%) scale(0); opacity: 0.6 }
       55% { opacity: 0.3 }
@@ -189,8 +193,6 @@ function style(): void {
       will-change: transform, opacity;
       animation: bloom 0.78s cubic-bezier(0.19, 0.84, 0.26, 1) forwards;
     }
-
-    
     @keyframes sparkgrow {
       from { transform: translate(-50%, -50%) scale(0.18) }
       to { transform: translate(-50%, -50%) scale(2.9) }
@@ -203,7 +205,6 @@ function style(): void {
     .spark {
       position: absolute;
       pointer-events: none;
-      
       background: radial-gradient(
         circle closest-side at 50% 50%,
         rgba(255, 255, 255, 0.5) 0%,
@@ -220,9 +221,6 @@ function style(): void {
         sparkgrow ${SPARK_SECONDS}s cubic-bezier(0.16, 0.82, 0.28, 1) both,
         sparkgo ${SPARK_SECONDS}s linear both;
     }
-
-    
-    
     @keyframes pointed {
       0% { opacity: 0 }
       6% { opacity: 1 }
@@ -230,8 +228,6 @@ function style(): void {
       100% { opacity: 0 }
     }
     .pointed { animation: pointed 5.4s cubic-bezier(0.33, 1, 0.68, 1) both }
-
-    
     .tap {
       cursor: pointer;
       text-decoration: underline;
@@ -239,7 +235,6 @@ function style(): void {
       text-decoration-thickness: 1px;
     }
     .tap:hover { filter: brightness(1.35) }
-
     @keyframes shimmer { from { background-position: 210% 0 } to { background-position: -110% 0 } }
     .shining { position: relative; display: inline-block }
     .shining::after {
@@ -294,6 +289,17 @@ function style(): void {
 }
 
 export const shimmer = (): void => style()
+
+let recolouring: ReturnType<typeof setTimeout> | undefined
+
+export function recolour(): void {
+  if (!motion || typeof document === 'undefined') return
+  style()
+  const page = document.documentElement
+  page.classList.add('recolouring')
+  clearTimeout(recolouring)
+  recolouring = setTimeout(() => page.classList.remove('recolouring'), RECOLOUR * 1000 + 80)
+}
 
 const WASH_SECONDS = 1.9
 const SPARK_SECONDS = 0.9

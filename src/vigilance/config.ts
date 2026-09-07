@@ -100,6 +100,8 @@ export interface ConfigDeps {
   palette: Palette
   renderer: DomRenderer
   fade: BasicState<number>
+
+  onTheme?: (name: string, undo: () => void) => void
 }
 
 export function appConfig(deps: ConfigDeps): SettingsConfig {
@@ -128,8 +130,14 @@ export function appConfig(deps: ConfigDeps): SettingsConfig {
               options: THEMES.map((t) => t.name),
               index: () => settings.theme,
               onChange: kept((index: number) => {
+                const was = settings.theme
                 settings.theme = index
                 applyTheme(palette, THEMES[index])
+                deps.onTheme?.(THEMES[index].name, () => {
+                  settings.theme = was
+                  applyTheme(palette, THEMES[was])
+                  remember(settings)
+                })
               }),
             },
           },

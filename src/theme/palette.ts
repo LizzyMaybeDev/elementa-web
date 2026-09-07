@@ -1,6 +1,7 @@
 import { BasicState } from '../elementa/state'
 import { type Color, hex } from '../elementa/color'
 import { saying } from '../elementa/rich'
+import { recolour } from '../elementa/effects'
 
 const SLOTS = [
   'primary',
@@ -241,6 +242,7 @@ export function createPalette(theme: ThemeDefinition = VIGILANCE): Palette {
 }
 
 export function applyTheme(palette: Palette, theme: ThemeDefinition): void {
+  recolour()
   for (const slot of SLOTS) palette[slot].set(hex(theme[slot]))
 }
 

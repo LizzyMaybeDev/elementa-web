@@ -1,4 +1,4 @@
-import { invalidateLayout } from './frame'
+import { type Node_, invalidateFor, reader } from './frame'
 
 export type Listener<T> = (value: T) => void
 
@@ -11,18 +11,22 @@ export class BasicState<T> implements State<T> {
   private value: T
   private listeners = new Set<Listener<T>>()
 
+  private readonly readers = new Set<Node_>()
+
   constructor(value: T) {
     this.value = value
   }
 
   get(): T {
+    const who = reader()
+    if (who) this.readers.add(who)
     return this.value
   }
 
   set = (value: T): void => {
     if (Object.is(this.value, value)) return
     this.value = value
-    invalidateLayout()
+    invalidateFor(this.readers)
     for (const listener of this.listeners) listener(value)
   }
 

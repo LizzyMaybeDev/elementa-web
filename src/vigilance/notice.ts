@@ -1,11 +1,9 @@
-
 import {
   BasicState,
   UIBlock,
   UIContainer,
   UIImage,
   UIText,
-  UIWrappedText,
   atMost,
   center,
   childBasedSize,
@@ -19,9 +17,12 @@ import {
 import type { UIComponent } from '../elementa/component'
 import { tint } from '../elementa/animation'
 import { withAlpha } from '../elementa/color'
-import { AFTER_BOX, LayerEffect, OutlineEffect, RiseEffect, leave } from '../elementa/effects'
+import { AFTER_BOX, OutlineEffect, RiseEffect } from '../elementa/effects'
 import type { Palette } from '../theme/palette'
+import { UIRich } from '../elementa/rich'
+import { inkOf } from '../theme/palette'
 import { pressable } from './shell'
+import { dialog } from './dialog'
 
 const WAIT = 4
 
@@ -42,31 +43,10 @@ export function notice(root: UIComponent, palette: Palette, options: NoticeOptio
   const remaining = () => Math.max(0, Math.ceil(seconds - (performance.now() - opened) / 1000))
   const left = new BasicState(remaining())
 
-  const scrim = new UIBlock(tint(() => withAlpha(palette.mainBackground.get(), 232)))
-    .constrain({ width: percent(1), height: percent(1) })
-    .childOf(root)
-  scrim.onClick = () => {}
-  scrim.effect(new LayerEffect(2))
-
-  const dismiss = (): void => {
-    leave(scrim.element, false, () => {})
-    leave(panel.element, true, () => {
-      scrim.detach().dispose()
-      scrim.element?.remove()
-    })
-  }
-
-  const panel = new UIBlock(palette.componentBackground)
-    .constrain({
-      x: center(),
-      y: center(),
-      width: atMost(percent(0.94), pixels(340)),
-      height: plus(childBasedSize(), pixels(28)),
-    })
-    .childOf(scrim)
-  panel.effect(new OutlineEffect(palette.componentBorder))
-  panel.effect(new RiseEffect(0))
-  scrim.effect(new RiseEffect(0, false))
+  const { scrim, panel, dismiss } = dialog(root, palette, {
+    width: atMost(percent(0.94), pixels(340)),
+    height: plus(childBasedSize(), pixels(28)),
+  })
 
   const column = new UIContainer()
     .constrain({
@@ -85,37 +65,23 @@ export function notice(root: UIComponent, palette: Palette, options: NoticeOptio
       .effect(new RiseEffect(arriving++))
   }
 
-  new UIText(options.title, { color: palette.textHighlight, scale: 1.4 })
-    .constrain({ x: center(), y: options.image ? sibling(8) : pixels(0) })
+  const say = inkOf(palette)
+  new UIRich(say(options.title), { colour: palette.textHighlight, scale: 1.5, centred: true }, true)
+    .constrain({ y: options.image ? sibling(8) : pixels(0), width: percent(1) })
     .childOf(column)
     .effect(new RiseEffect(arriving++))
 
-  new UIWrappedText(options.body, { color: palette.text, centred: true })
+  new UIRich(say(options.body), { colour: palette.text, centred: true }, true)
     .constrain({ y: sibling(12), width: percent(1) })
     .childOf(column)
     .effect(new RiseEffect(arriving++))
 
   const ticks = new BasicState(0)
 
-  pressable(
-    palette,
-    derived(() => (left.get() > 0 ? `${options.accept} (${left.get()})` : options.accept)),
-    percent(1),
-    () => {
-      dismiss()
-      if (ticks.get() >= 2) options.again?.onDone()
-      options.onAccept()
-    },
-    { enabled: () => left.get() <= 0, scale: 0.8 },
-  )
-    .constrain({ x: center(), y: sibling(16) })
-    .childOf(column)
-    .effect(new RiseEffect(arriving++))
-
   if (options.again) {
     const { first, second } = options.again
     const row = new UIContainer()
-      .constrain({ x: center(), y: sibling(10), width: childBasedSize(6), height: pixels(11) })
+      .constrain({ x: center(), y: sibling(16), width: childBasedSize(6), height: pixels(11) })
       .childOf(column)
 
     const box = new UIBlock(palette.mainBackground)
@@ -141,6 +107,21 @@ export function notice(root: UIComponent, palette: Palette, options: NoticeOptio
     row.onClick = () => ticks.set(Math.min(2, ticks.get() + 1))
     row.effect(new RiseEffect(arriving++))
   }
+
+  pressable(
+    palette,
+    derived(() => (left.get() > 0 ? `${options.accept} (${left.get()})` : options.accept)),
+    percent(1),
+    () => {
+      dismiss()
+      if (ticks.get() >= 2) options.again?.onDone()
+      options.onAccept()
+    },
+    { enabled: () => left.get() <= 0, scale: 0.8 },
+  )
+    .constrain({ x: center(), y: sibling(options.again ? 10 : 16) })
+    .childOf(column)
+    .effect(new RiseEffect(arriving++))
 
   const tick = setInterval(() => {
     const now = remaining()

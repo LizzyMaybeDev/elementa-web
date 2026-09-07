@@ -6,7 +6,10 @@ import { setStyle } from './style'
 interface Entry {
   image: HTMLImageElement
   promise: Promise<HTMLImageElement>
+
   ready: boolean
+
+  drawn: boolean
 }
 
 const cache = new Map<string, Entry>()
@@ -19,10 +22,18 @@ export function loadImage(src: string): Promise<HTMLImageElement> {
   const entry: Entry = {
     image,
     ready: false,
+    drawn: false,
     promise: new Promise((resolve, reject) => {
       image.onload = () => {
         entry.ready = true
 
+        const done = (): void => {
+          entry.drawn = true
+          invalidateLayout()
+        }
+        const decode = typeof image.decode === 'function' ? image.decode() : null
+        if (decode) void decode.then(done, done)
+        else done()
         invalidateLayout()
         resolve(image)
       }
@@ -101,6 +112,8 @@ ${glow ?? ''}`
   return out
 }
 
+export const decoded = (src: string): boolean => cache.get(src)?.drawn ?? false
+
 export function peekImage(src: string): HTMLImageElement | null {
   const entry = cache.get(src)
   return entry?.ready ? entry.image : null
@@ -141,6 +154,11 @@ export class UIImage extends UIComponent {
   }
 
   override paint(element: HTMLElement): void {
+
+    if (this.src && !decoded(this.src) && element.style.backgroundImage) {
+      setStyle(element, 'image-rendering', this.pixelated ? 'pixelated' : 'auto')
+      return
+    }
     setStyle(element, 'background', `center / ${this.fit} no-repeat url(${JSON.stringify(this.src)})`)
     setStyle(element, 'image-rendering', this.pixelated ? 'pixelated' : 'auto')
   }

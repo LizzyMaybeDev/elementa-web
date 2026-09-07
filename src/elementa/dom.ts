@@ -1,8 +1,9 @@
 import { UIComponent, Window } from './component'
 import { setScaleFactor } from './constraints'
-import { measureScrollers, rehome, scrollMetrics } from './effects'
-import { invalidateLayout, layoutOwed } from './frame'
+import { measureScrollers, rehome, scrollMetrics, shine } from './effects'
+import { building, invalidateScroll, islands, passOwed, rousedNow, setReading } from './frame'
 import { setStyle } from './style'
+import { touch } from './device'
 
 interface Clip {
   left: number
@@ -12,6 +13,10 @@ interface Clip {
 }
 
 const MARGIN = 200
+
+const AHEAD = 900
+
+const BUDGET = 8
 
 export interface RendererOptions {
   scale?: number
@@ -67,6 +72,13 @@ export class DomRenderer {
   private readonly placed = new WeakMap<UIComponent, Float64Array>()
   private frame = 0
   private running = false
+  private deadline = Infinity
+  private margin = MARGIN
+
+  private readonly clips = new WeakMap<UIComponent, Clip>()
+
+  private warmable = true
+  private created = 0
 
   private live: UIComponent[] = []
 
@@ -78,6 +90,8 @@ export class DomRenderer {
   autoScale: boolean
 
   compact = false
+
+  compactZoom = 1
   private readonly compactBelow: number
   private readonly compactLogicalWidth: number
   private readonly minLogicalWidth: number
@@ -104,12 +118,18 @@ export class DomRenderer {
     const rect = host.getBoundingClientRect()
     this.size = { width: rect.width, height: rect.height }
 
-    host.addEventListener('scroll', invalidateLayout, { capture: true, passive: true })
+    this.compact = rect.width < this.compactBelow
+
+    host.addEventListener('scroll', invalidateScroll, { capture: true, passive: true })
     this.delegate()
   }
 
   private delegate(): void {
     const host = this.host
+
+    const words = (): string => globalThis.getSelection?.()?.toString() ?? ''
+
+    let picked = ''
     const owner = (target: EventTarget | null): UIComponent | null => {
       for (let node = target as HTMLElement | null; node && node !== host; node = node.parentElement) {
         const held = this.owners.get(node)
@@ -119,6 +139,8 @@ export class DomRenderer {
     }
 
     host.addEventListener('click', (event) => {
+
+      if (words() && words() !== picked) return
       for (let held = owner(event.target); held; held = held.parent) {
         if (!held.onClick) continue
         held.onClick(event)
@@ -126,7 +148,24 @@ export class DomRenderer {
       }
     })
 
+    host.addEventListener('contextmenu', (event) => {
+      for (let held = owner(event.target); held; held = held.parent) {
+        if (!held.onRightClick) continue
+        event.preventDefault()
+        held.onRightClick(event)
+        return
+      }
+    })
+
     host.addEventListener('pointerdown', (event) => {
+      picked = words()
+
+      for (let told = owner(event.target); told; told = told.parent) {
+        if (!told.onPress) continue
+        told.onPress(event)
+        break
+      }
+
       let held = owner(event.target)
       while (held && !held.onDrag) held = held.parent
       const element = held?.element
@@ -148,6 +187,7 @@ export class DomRenderer {
         element.removeEventListener('pointermove', emit)
         element.removeEventListener('pointerup', release)
         element.removeEventListener('pointercancel', release)
+        held.onDragEnd?.()
       }
       element.addEventListener('pointermove', emit)
       element.addEventListener('pointerup', release)
@@ -163,6 +203,8 @@ export class DomRenderer {
       for (const left of was) if (!now.includes(left)) left.onHover?.(false)
       for (const entered of now) if (!was.includes(entered)) entered.onHover?.(true)
     }
+
+    if (touch) return
     let lastX = NaN
     let lastY = NaN
     host.addEventListener('pointerover', (event) => {
@@ -179,9 +221,11 @@ export class DomRenderer {
     const rect = this.size
 
     this.compact = rect.width < this.compactBelow
-    if (this.compact) {
+
+    if (this.compact && this.autoScale) {
       const ratio = globalThis.devicePixelRatio || 1
-      this.scale = Math.max(1, Math.floor((rect.width * ratio) / this.compactLogicalWidth)) / ratio
+      const fit = Math.max(1, Math.floor((rect.width * ratio) / this.compactLogicalWidth)) / ratio
+      this.scale = fit * this.compactZoom
     } else if (this.autoScale) {
       this.scale = Math.max(
         this.minScale,
@@ -195,19 +239,39 @@ export class DomRenderer {
     this.window_.invalidate()
 
     this.live = []
-    this.sync(this.window_, this.host)
-    this.position(this.window_, null, {
-      left: 0,
-      top: 0,
-      right: this.window_.getWidth(),
-      bottom: this.window_.getHeight(),
-    })
+    this.deadline = performance.now() + BUDGET
+    this.position(this.window_, null, this.whole(), false)
+    this.warmable = true
     this.onFrame?.()
   }
 
-  private sync(component: UIComponent, hostElement: HTMLElement): void {
-    let element = this.elements.get(component)
+  scrolled(): void {
+    measureScrollers()
+    this.deadline = performance.now() + BUDGET
+    this.position(this.window_, null, this.whole(), true)
+    this.warmable = true
+    this.onFrame?.()
+  }
 
+  private warm(): void {
+    if (!this.warmable) return
+    const before = this.created
+    this.margin = AHEAD
+    this.deadline = performance.now() + BUDGET / 2
+    try {
+      this.position(this.window_, null, this.whole(), true)
+    } finally {
+      this.margin = MARGIN
+    }
+    if (this.created === before) this.warmable = false
+  }
+
+  private whole(): Clip {
+    return { left: 0, top: 0, right: this.window_.getWidth(), bottom: this.window_.getHeight() }
+  }
+
+  private ensure(component: UIComponent, hostElement: HTMLElement): HTMLElement {
+    let element = this.elements.get(component)
     if (!element) {
       element = document.createElement(component.tag)
       element.dataset.component = component.name
@@ -219,21 +283,21 @@ export class DomRenderer {
       this.owners.set(element, component)
       component.element = element
       hostElement.appendChild(element)
+      this.created++
     } else if (element.parentElement !== hostElement) {
       hostElement.appendChild(element)
       rehome(element)
     }
+    return element
+  }
 
-    if (!component.treeDirty) return
+  private tidy(component: UIComponent, element: HTMLElement): void {
     component.treeDirty = false
-
     const wanted = new Set<HTMLElement>()
     for (const child of component.children) {
-      this.sync(child, element)
-      const childElement = this.elements.get(child)
-      if (childElement) wanted.add(childElement)
+      const held = this.elements.get(child)
+      if (held) wanted.add(held)
     }
-
     for (const existing of Array.from(element.children)) {
       const child = existing as HTMLElement
       if (!this.managed.has(child) || wanted.has(child)) continue
@@ -242,9 +306,51 @@ export class DomRenderer {
     }
   }
 
-  private position(component: UIComponent, parent: UIComponent | null, clip: Clip): void {
-    const element = this.elements.get(component)
-    if (!element) return
+  private position(
+    component: UIComponent,
+    parent: UIComponent | null,
+    clip: Clip,
+    scrolling: boolean,
+  ): void {
+
+    const home = parent ? parent.element : this.host
+    if (!home) return
+
+    setReading(component)
+    let made = !this.elements.has(component)
+    const element = this.ensure(component, home)
+
+    if (component.lazy) {
+      component.culledBelow = false
+      if (this.outside(component, clip)) {
+        component.culled = true
+        return
+      }
+      if (performance.now() > this.deadline) {
+        component.culled = true
+        invalidateScroll()
+        return
+      }
+      const build = component.lazy
+      component.lazy = null
+      building(build)
+      scrolling = false
+      made = true
+    }
+
+    if (scrolling) {
+      const tracks = component.scrollBound || component.effects.some((effect) => effect.scrolls)
+      if (tracks) component.invalidate()
+
+      else if (component.holdsScrollBound) {
+        this.descend(component, element, clip, true, false)
+        return
+      } else if (!component.culled && !component.culledBelow) return
+      else {
+        this.descend(component, element, clip, true, false)
+        return
+      }
+    }
 
     const left = component.getLeft()
     const top = component.getTop()
@@ -267,12 +373,16 @@ export class DomRenderer {
     if (box[2] !== w) setStyle(element, 'width', `${(box[2] = w)}px`)
     if (box[3] !== h) setStyle(element, 'height', `${(box[3] = h)}px`)
 
-    const cursor = component.onDrag
-      ? (component.dragCursor ?? 'ew-resize')
-      : component.onClick
-        ? 'pointer'
-        : ''
+    const cursor =
+      component.cursor ??
+      (component.onDrag
+        ? (component.dragCursor ?? 'ew-resize')
+        : component.onClick
+          ? 'pointer'
+          : '')
     setStyle(element, 'cursor', cursor)
+
+    setStyle(element, 'touch-action', component.onDrag ? 'none' : '')
 
     if (component.live) this.live.push(component)
     component.paint(element, this.scale)
@@ -283,31 +393,102 @@ export class DomRenderer {
       setStyle(element, 'outline-offset', '-1px')
     }
 
-    if (component.children.length === 0) return
+    if (component.sealed) this.clips.set(component, clip)
+    this.descend(component, element, clip, scrolling, made)
+    if (component.sealed) islands.delete(component)
+    setReading(parent)
+  }
 
-    if (
-      left + width < clip.left - MARGIN ||
-      top + height < clip.top - MARGIN ||
-      left > clip.right + MARGIN ||
-      top > clip.bottom + MARGIN
-    ) {
+  private settle(): void {
+    if (islands.size === 0) return
+    this.deadline = performance.now() + BUDGET
+    for (const held of islands) {
+      islands.delete(held)
+      this.alone(held as UIComponent)
+    }
+  }
+
+  private alone(island: UIComponent): void {
+    const clip = this.clips.get(island)
+    const home = island.parent?.element
+
+    if (!clip || !home || island.element?.parentElement !== home) return
+    island.invalidate()
+    this.position(island, island.parent, clip, false)
+  }
+
+  private rouse(): void {
+    this.deadline = performance.now() + BUDGET
+    for (const held of rousedNow(performance.now())) this.alone(held as UIComponent)
+  }
+
+  private outside(component: UIComponent, clip: Clip, margin = this.margin): boolean {
+    const left = component.getLeft()
+    const top = component.getTop()
+    return (
+      left + component.getWidth() < clip.left - margin ||
+      top + component.getHeight() < clip.top - margin ||
+      left > clip.right + margin ||
+      top > clip.bottom + margin
+    )
+  }
+
+  private descend(
+    component: UIComponent,
+    element: HTMLElement,
+    clip: Clip,
+    scrolling: boolean,
+    made: boolean,
+  ): void {
+    if (component.children.length === 0) {
+      if (component.treeDirty) this.tidy(component, element)
       return
     }
+
+    if (made && performance.now() > this.deadline) {
+      component.culled = true
+      component.culledBelow = false
+      invalidateScroll()
+      return
+    }
+
+    const out = this.outside(component, clip)
+    const fresh = component.culled && !out
+    component.culled = out
+    if (out) {
+      component.culledBelow = false
+
+      if (!component.released && this.outside(component, clip, AHEAD)) {
+        component.released = true
+        for (const node of component.walk()) node.release()
+      }
+      return
+    }
+    component.released = false
 
     let inner = clip
     for (const effect of component.effects) {
       if (!effect.clips) continue
-      const shift = scrollMetrics(element).top / scale
+      const shift = scrollMetrics(element).top / this.scale
+      const left = component.getLeft()
+      const top = component.getTop()
       inner = {
         left: Math.max(clip.left, left),
         top: Math.max(clip.top, top) + shift,
-        right: Math.min(clip.right, left + width),
-        bottom: Math.min(clip.bottom, top + height) + shift,
+        right: Math.min(clip.right, left + component.getWidth()),
+        bottom: Math.min(clip.bottom, top + component.getHeight()) + shift,
       }
       break
     }
 
-    for (const child of component.children) this.position(child, component, inner)
+    const partial = scrolling && !fresh
+    let below = false
+    for (const child of component.children) {
+      this.position(child, component, inner, partial)
+      if (child.culled || child.culledBelow) below = true
+    }
+    component.culledBelow = below
+    if (component.treeDirty) this.tidy(component, element)
   }
 
   start(): void {
@@ -317,8 +498,20 @@ export class DomRenderer {
     const loop = () => {
       if (!this.running) return
       try {
-        if (layoutOwed(performance.now())) this.render()
-        else this.paintLive()
+
+        shine()
+        const pass = passOwed(performance.now())
+        if (pass === 'layout') this.render()
+        else if (pass === 'scroll') this.scrolled()
+        else if (pass === 'islands') {
+          this.rouse()
+          this.settle()
+          this.paintLive()
+        } else {
+          this.settle()
+          this.paintLive()
+          this.warm()
+        }
       } catch (error) {
         const message = (error as Error).message
         if (message !== reported) {

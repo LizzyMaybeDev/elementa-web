@@ -1,4 +1,5 @@
 import { wake } from './frame'
+import { touch } from './device'
 import { derived, type State } from './state'
 import { type Color, lerp as lerpColor, sameColor } from './color'
 
@@ -114,7 +115,8 @@ export function animatedColor(
   source: State<Color>,
   options: AnimateOptions<Color> = {},
 ): State<Color> {
-  return animated(source, lerpColor, { equals: sameColor, ...options })
+
+  return animated(source, lerpColor, { equals: sameColor, ...options, ...(touch ? { seconds: 0 } : {}) })
 }
 
 export const eased = (compute: () => number, options: AnimateOptions<number> = {}): State<number> =>

@@ -1,13 +1,17 @@
 import { UIComponent } from './component'
 import { type Color, rgba, shadowOf, toCss } from './color'
 import { BasicState } from './state'
-import { LINE_HEIGHT, bitmapFont, fontGeneration } from './font'
-import { FALLBACK_FONT, type FontSpec, measureText } from './components'
+import { invalidateLayout } from './frame'
+import { FAMILY, LINE_HEIGHT, measureText } from './font'
 
 const SELECTION_BACKGROUND = rgba(255, 255, 255)
 const SELECTION_FOREGROUND = rgba(64, 139, 229)
 const CURSOR = rgba(255, 255, 255)
 const CURSOR_BLINK_SECONDS = 1
+
+const BASELINE = 7
+
+void document.fonts?.ready.then(invalidateLayout)
 
 let focused: UITextInput | null = null
 const fallbackHandlers = new Set<(event: KeyboardEvent) => boolean>()
@@ -27,6 +31,15 @@ function ensureListening(): void {
 
   document.addEventListener('keydown', (event) => {
     if (focused) {
+
+      if (event.target === keyboard) {
+        if (event.key === 'Enter' || event.key === 'Escape') {
+          const done = focused
+          done.blur()
+          if (event.key === 'Enter' && done.value.get().trim()) done.onSubmit?.()
+        }
+        return
+      }
       focused.handleKey(event)
       return
     }
@@ -50,13 +63,51 @@ function ensureListening(): void {
   }
 }
 
+let keyboard: HTMLInputElement | null = null
+
+const touchable = (): boolean =>
+  typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
+
+function raiseKeyboard(owner: UITextInput): void {
+  if (typeof document === 'undefined') return
+  if (!keyboard) {
+    keyboard = document.createElement('input')
+    keyboard.type = 'text'
+    keyboard.autocapitalize = 'off'
+    keyboard.autocomplete = 'off'
+    keyboard.spellcheck = false
+    keyboard.tabIndex = -1
+    keyboard.setAttribute('aria-hidden', 'true')
+    keyboard.style.cssText =
+      'position:fixed;opacity:0;border:0;padding:0;background:transparent;color:transparent;pointer-events:none'
+    document.body.appendChild(keyboard)
+    keyboard.addEventListener('input', () => {
+      if (keyboard) focused?.replaceAll(keyboard.value)
+    })
+    keyboard.addEventListener('blur', () => focused?.blur())
+  }
+
+  const box = owner.element?.getBoundingClientRect()
+  if (box) {
+    keyboard.style.left = `${box.left}px`
+    keyboard.style.top = `${box.top}px`
+    keyboard.style.width = `${Math.max(1, box.width)}px`
+    keyboard.style.height = `${Math.max(1, box.height)}px`
+  }
+  keyboard.value = owner.value.get()
+  keyboard.focus({ preventScroll: true })
+}
+
+function dropKeyboard(): void {
+  if (keyboard && document.activeElement === keyboard) keyboard.blur()
+}
+
 const isWordChar = (character: string): boolean => /[\p{L}\p{N}_]/u.test(character)
 
 export interface TextInputOptions {
   placeholder?: string
   scale?: number
   shadow?: boolean
-  font?: FontSpec
 }
 
 export class UITextInput extends UIComponent {
@@ -68,12 +119,13 @@ export class UITextInput extends UIComponent {
   }
 
   readonly value = new BasicState('')
+
+  onSubmit: (() => void) | null = null
   readonly placeholder: string
   readonly scale: number
   readonly shadow: boolean
-  readonly font: FontSpec
 
-  private cursor = 0
+  private caret = 0
   private anchor = 0
   private scrollOffset = 0
   private undoStack: { text: string; cursor: number }[] = []
@@ -84,7 +136,6 @@ export class UITextInput extends UIComponent {
     this.placeholder = options.placeholder ?? ''
     this.scale = options.scale ?? 1
     this.shadow = options.shadow ?? true
-    this.font = options.font ?? FALLBACK_FONT
 
     ensureListening()
     this.onClick = (event) => {
@@ -92,16 +143,25 @@ export class UITextInput extends UIComponent {
       const box = this.element?.getBoundingClientRect()
       if (!box) return
       const local = (event.clientX - box.left) / (box.width / Math.max(1, this.getWidth()))
-      this.setCursor(this.columnAt(local))
+      this.setCaret(this.columnAt(local))
     }
   }
 
   focus(): void {
     focused = this
+    if (touchable()) raiseKeyboard(this)
+  }
+
+  replaceAll(text: string): void {
+    if (text === this.value.get()) return
+    this.value.set(text)
+    this.setCaret(text.length)
   }
 
   blur(): void {
-    if (focused === this) focused = null
+    if (focused !== this) return
+    focused = null
+    dropKeyboard()
   }
 
   get isFocused(): boolean {
@@ -114,11 +174,11 @@ export class UITextInput extends UIComponent {
 
   setText(text: string): void {
     this.value.set(text)
-    this.setCursor(Math.min(this.cursor, text.length))
+    this.setCaret(Math.min(this.caret, text.length))
   }
 
   hasSelection(): boolean {
-    return this.cursor !== this.anchor
+    return this.caret !== this.anchor
   }
 
   selectedText(): string {
@@ -126,20 +186,20 @@ export class UITextInput extends UIComponent {
   }
 
   private selectionStart(): number {
-    return Math.min(this.cursor, this.anchor)
+    return Math.min(this.caret, this.anchor)
   }
 
   private selectionEnd(): number {
-    return Math.max(this.cursor, this.anchor)
+    return Math.max(this.caret, this.anchor)
   }
 
-  private setCursor(column: number): void {
-    this.cursor = Math.max(0, Math.min(this.getText().length, column))
-    this.anchor = this.cursor
+  private setCaret(column: number): void {
+    this.caret = Math.max(0, Math.min(this.getText().length, column))
+    this.anchor = this.caret
   }
 
   private textWidth(text: string): number {
-    return measureText(text, this.font, this.scale)
+    return measureText(text, this.scale)
   }
 
   private columnAt(x: number): number {
@@ -156,7 +216,7 @@ export class UITextInput extends UIComponent {
 
   private wordBoundary(direction: -1 | 1): number {
     const text = this.getText()
-    let index = this.cursor
+    let index = this.caret
     const peek = (): string => text[direction < 0 ? index - 1 : index] ?? ''
     while (index + direction >= 0 && index + direction <= text.length && !isWordChar(peek())) {
       index += direction
@@ -168,7 +228,7 @@ export class UITextInput extends UIComponent {
   }
 
   private record(): void {
-    this.undoStack.push({ text: this.getText(), cursor: this.cursor })
+    this.undoStack.push({ text: this.getText(), cursor: this.caret })
     this.redoStack.length = 0
   }
 
@@ -177,7 +237,7 @@ export class UITextInput extends UIComponent {
     const current = this.getText()
     const start = this.selectionStart()
     this.value.set(current.slice(0, start) + text + current.slice(this.selectionEnd()))
-    this.setCursor(start + text.length)
+    this.setCaret(start + text.length)
   }
 
   deleteSelection(): void {
@@ -186,7 +246,7 @@ export class UITextInput extends UIComponent {
     const current = this.getText()
     const start = this.selectionStart()
     this.value.set(current.slice(0, start) + current.slice(this.selectionEnd()))
-    this.setCursor(start)
+    this.setCaret(start)
   }
 
   private removeRange(start: number, end: number): void {
@@ -194,15 +254,15 @@ export class UITextInput extends UIComponent {
     this.record()
     const current = this.getText()
     this.value.set(current.slice(0, start) + current.slice(end))
-    this.setCursor(start)
+    this.setCaret(start)
   }
 
   private swap(from: typeof this.undoStack, to: typeof this.undoStack): void {
     const entry = from.pop()
     if (!entry) return
-    to.push({ text: this.getText(), cursor: this.cursor })
+    to.push({ text: this.getText(), cursor: this.caret })
     this.value.set(entry.text)
-    this.setCursor(entry.cursor)
+    this.setCaret(entry.cursor)
   }
 
   handleKey(event: KeyboardEvent): boolean {
@@ -211,8 +271,8 @@ export class UITextInput extends UIComponent {
     const text = this.getText()
 
     const move = (column: number): void => {
-      this.cursor = Math.max(0, Math.min(text.length, column))
-      if (!shift) this.anchor = this.cursor
+      this.caret = Math.max(0, Math.min(text.length, column))
+      if (!shift) this.anchor = this.caret
     }
 
     const consume = (): true => {
@@ -222,7 +282,7 @@ export class UITextInput extends UIComponent {
 
     if (ctrl && event.key.toLowerCase() === 'a') {
       this.anchor = 0
-      this.cursor = text.length
+      this.caret = text.length
       return consume()
     }
     if (ctrl && event.key.toLowerCase() === 'z') {
@@ -238,10 +298,10 @@ export class UITextInput extends UIComponent {
 
     switch (event.key) {
       case 'ArrowLeft':
-        move(ctrl ? this.wordBoundary(-1) : !shift && this.hasSelection() ? this.selectionStart() : this.cursor - 1)
+        move(ctrl ? this.wordBoundary(-1) : !shift && this.hasSelection() ? this.selectionStart() : this.caret - 1)
         return consume()
       case 'ArrowRight':
-        move(ctrl ? this.wordBoundary(1) : !shift && this.hasSelection() ? this.selectionEnd() : this.cursor + 1)
+        move(ctrl ? this.wordBoundary(1) : !shift && this.hasSelection() ? this.selectionEnd() : this.caret + 1)
         return consume()
       case 'Home':
         move(0)
@@ -251,18 +311,19 @@ export class UITextInput extends UIComponent {
         return consume()
       case 'Backspace':
         if (this.hasSelection()) this.deleteSelection()
-        else if (this.cursor > 0) this.removeRange(ctrl ? this.wordBoundary(-1) : this.cursor - 1, this.cursor)
+        else if (this.caret > 0) this.removeRange(ctrl ? this.wordBoundary(-1) : this.caret - 1, this.caret)
         return consume()
       case 'Delete':
         if (this.hasSelection()) this.deleteSelection()
-        else if (this.cursor < text.length)
-          this.removeRange(this.cursor, ctrl ? this.wordBoundary(1) : this.cursor + 1)
+        else if (this.caret < text.length)
+          this.removeRange(this.caret, ctrl ? this.wordBoundary(1) : this.caret + 1)
         return consume()
       case 'Escape':
         this.blur()
         return consume()
       case 'Enter':
         this.blur()
+        if (text.trim()) this.onSubmit?.()
         return consume()
     }
 
@@ -275,7 +336,7 @@ export class UITextInput extends UIComponent {
 
   private updateScroll(): void {
     const box = this.getWidth()
-    const before = this.textWidth(this.getText().slice(0, this.cursor))
+    const before = this.textWidth(this.getText().slice(0, this.caret))
 
     if (this.textWidth(this.getText()) < box) this.scrollOffset = 0
     else if (this.scrollOffset > before) this.scrollOffset = before
@@ -304,28 +365,21 @@ export class UITextInput extends UIComponent {
     ctx.clearRect(0, 0, width, height)
     ctx.translate(-this.scrollOffset, 0)
 
-    const bitmap = bitmapFont()
     const color = this.getColor()
+
     const draw = (value: string, x: number, tone: Color): void => {
       if (!value) return
       ctx.save()
       ctx.scale(this.scale, this.scale)
-      const y = (height - LINE_HEIGHT * this.scale) / 2 / this.scale
-      if (bitmap) {
-        if (this.shadow && tone !== SELECTION_FOREGROUND) {
-          bitmap.draw(ctx, value, x / this.scale + 1, y + 1, shadowOf(tone))
-        }
-        bitmap.draw(ctx, value, x / this.scale, y, tone)
-      } else {
-        ctx.font = `${this.font.weight} ${this.font.size}px ${this.font.family}`
-        ctx.textBaseline = 'top'
-        if (this.shadow && tone !== SELECTION_FOREGROUND) {
-          ctx.fillStyle = toCss(shadowOf(tone))
-          ctx.fillText(value, x / this.scale + 1, y + 1)
-        }
-        ctx.fillStyle = toCss(tone)
-        ctx.fillText(value, x / this.scale, y)
+      ctx.font = `${LINE_HEIGHT}px ${FAMILY}`
+      ctx.textBaseline = 'alphabetic'
+      const y = (height - LINE_HEIGHT * this.scale) / 2 / this.scale + BASELINE
+      if (this.shadow && tone !== SELECTION_FOREGROUND) {
+        ctx.fillStyle = toCss(shadowOf(tone))
+        ctx.fillText(value, x / this.scale + 1, y + 1)
       }
+      ctx.fillStyle = toCss(tone)
+      ctx.fillText(value, x / this.scale, y)
       ctx.restore()
     }
 
@@ -347,11 +401,9 @@ export class UITextInput extends UIComponent {
       draw(text, 0, color)
     }
 
-    void fontGeneration()
-
     if (showCursor) {
       ctx.fillStyle = toCss(CURSOR)
-      ctx.fillRect(this.textWidth(text.slice(0, this.cursor)), 1, this.scale, height - 2)
+      ctx.fillRect(this.textWidth(text.slice(0, this.caret)), 1, this.scale, height - 2)
     }
   }
 }

@@ -80,12 +80,9 @@ and are used verbatim; the other themes are not.
 Not affiliated with, endorsed by, or connected to Essential, Sk1er LLC, ModCore
 Inc, or Mojang.
 
-## Tests
+## Building
 
 ```bash
 npm install
-npm test
+npm run typecheck
 ```
-
-Some tests read the upstream Kotlin to check a number here against the number
-there, and skip themselves when it is not checked out beside this project.

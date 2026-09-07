@@ -412,6 +412,8 @@ export class BasicConstraint extends Constraint {
 export interface ColorConstraint {
   cachedValue: Color
   recalculate: boolean
+
+  readonly moving: boolean
   getColor(component: UIComponent): Color
   invalidate(): void
 }
@@ -424,7 +426,7 @@ export class ConstantColorConstraint implements ColorConstraint {
   constructor(
     value: Color | State<Color>,
 
-    private readonly live = false,
+    readonly moving = false,
   ) {
     this.value = toState(value)
     this.cachedValue = this.value.get()
@@ -435,7 +437,7 @@ export class ConstantColorConstraint implements ColorConstraint {
   }
 
   getColor(): Color {
-    if (this.recalculate || this.live) {
+    if (this.recalculate || this.moving) {
       this.cachedValue = this.value.get()
       this.recalculate = false
     }

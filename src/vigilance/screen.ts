@@ -1,4 +1,3 @@
-
 import {
   UIBlock,
   UIContainer,
@@ -16,10 +15,11 @@ import {
   sibling,
 } from '../elementa'
 import { BasicState, derived } from '../elementa/state'
-import type { AnimateOptions } from '../elementa/animation'
-import { Animations, eased, tint } from '../elementa/animation'
+import { invalidateLayout } from '../elementa/frame'
+
+import { tint } from '../elementa/animation'
 import type { UIComponent } from '../elementa/component'
-import { OutlineEffect, ScissorEffect } from '../elementa/effects'
+import { LAYERS, LayerEffect, OutlineEffect, ScissorEffect, TransitionEffect } from '../elementa/effects'
 import type { Palette } from '../theme/palette'
 import { METRICS, panelShell, type ShellOptions } from './shell'
 
@@ -72,7 +72,11 @@ export function switchControl(palette: Palette, spec: Extract<Control, { kind: '
     })
     .childOf(root)
 
-  root.onClick = () => spec.onChange(!spec.value())
+  root.onClick = () => {
+    spec.onChange(!spec.value())
+
+    invalidateLayout()
+  }
   return root
 }
 
@@ -82,18 +86,26 @@ export function dropdownControl(
 ): UIComponent {
   const open = new BasicState(false)
 
-  const grow: AnimateOptions<number> = {
-    seconds: 0.35,
-    easingFor: (from, to) => (to > from ? Animations.IN_SIN : Animations.OUT_SIN),
-  }
-  const listHeight = eased(() => (open.get() ? spec.options.length * ROW_HEIGHT : 0), grow)
+  const listHeight = derived(() => (open.get() ? spec.options.length * ROW_HEIGHT : 0))
 
   const root = new UIContainer().constrain({
     x: pixels(INNER_PADDING, true),
     y: center(),
     width: pixels(CONTROL_WIDTH),
-    height: pixels(eased(() => 15 + (open.get() ? spec.options.length * ROW_HEIGHT + 2 : 0), grow)),
+    height: pixels(derived(() => 15 + (open.get() ? spec.options.length * ROW_HEIGHT + 2 : 0))),
   })
+
+  root.sealed = true
+
+  const lifted = new BasicState(false)
+  let lowering: ReturnType<typeof setTimeout> | undefined
+  root.onDispose(open.onSetValue((is) => {
+    clearTimeout(lowering)
+    if (is) lifted.set(true)
+    else lowering = setTimeout(() => lifted.set(false), 320)
+  }))
+  root.onDispose(() => clearTimeout(lowering))
+  root.effect(new LayerEffect(derived(() => (lifted.get() ? LAYERS.dropdown : 0))))
 
   const head = new UIBlock().constrain({ width: percent(1), height: pixels(15) }).childOf(root)
   const headHovered = hoverState(head)
@@ -113,11 +125,30 @@ export function dropdownControl(
 
   head.onClick = () => open.set(!open.get())
 
+  const outside = (event: PointerEvent): void => {
+    const inside = root.element?.contains(event.target as Node)
+    if (inside) return
+
+    fold.skip()
+    clearTimeout(lowering)
+    open.set(false)
+    lifted.set(false)
+  }
+  root.onDispose(
+    open.onSetValue((is) => {
+      if (is) document.addEventListener('pointerdown', outside, { capture: true })
+      else document.removeEventListener('pointerdown', outside, { capture: true })
+    }),
+  )
+  root.onDispose(() => document.removeEventListener('pointerdown', outside, { capture: true }))
+
   const list = new UIBlock(palette.componentBackground)
     .constrain({ y: sibling(2), width: percent(1), height: pixels(listHeight) })
     .childOf(root)
   list.effect(new OutlineEffect(palette.componentBorder))
   list.effect(new ScissorEffect())
+  const fold = new TransitionEffect('height', 0.3)
+  list.effect(fold)
 
   spec.options.forEach((option, index) => {
     const row = new UIBlock()
@@ -140,6 +171,7 @@ export function dropdownControl(
     row.onClick = () => {
       spec.onChange(index)
       open.set(false)
+      invalidateLayout()
     }
   })
 
@@ -170,6 +202,7 @@ function sliderControl(palette: Palette, spec: Extract<Control, { kind: 'slider'
   root.onDrag = ({ x, width }) => {
     const travel = Math.max(1, width - KNOB)
     spec.onChange(Math.max(0, Math.min(1, (x - KNOB / 2) / travel)))
+    invalidateLayout()
   }
   return root
 }

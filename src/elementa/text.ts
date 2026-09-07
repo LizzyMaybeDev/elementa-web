@@ -1,40 +1,49 @@
-export interface Measure {
-  (text: string): number
-}
+import { advanceOf, measureText } from './font'
 
-export function splitToWidth(text: string, maxWidth: number, measure: Measure): string[] {
-  const spaceWidth = measure(' ')
+const SPACE = 32
 
-  const limit = Math.max(1, maxWidth - spaceWidth)
+export function splitToWidth(text: string, maxWidth: number): string[] {
+  const space = advanceOf(SPACE)
+
+  const limit = Math.max(1, maxWidth - space)
 
   const lines: string[] = []
   let current = ''
+  let taken = 0
 
   const push = (): void => {
     lines.push(current)
     current = ''
+    taken = 0
   }
 
   for (const paragraph of text.split('\n')) {
     for (const word of paragraph.split(' ')) {
       if (!word) continue
 
-      const candidate = current ? `${current} ${word}` : word
-      if (measure(candidate) <= limit) {
-        current = candidate
+      const wide = measureText(word)
+      const joined = current ? taken + space + wide : wide
+      if (joined <= limit) {
+        current = current ? `${current} ${word}` : word
+        taken = joined
         continue
       }
 
       if (current) push()
 
-      let rest = word
-      while (measure(rest) > limit) {
-        let take = Math.max(1, rest.length - 1)
-        while (take > 1 && measure(rest.slice(0, take)) > limit) take--
-        lines.push(rest.slice(0, take))
-        rest = rest.slice(take)
+      let from = 0
+      let run = 0
+      for (let at = 0; at < word.length; at++) {
+        const glyph = advanceOf(word.charCodeAt(at))
+        if (run + glyph > limit && at > from) {
+          lines.push(word.slice(from, at))
+          from = at
+          run = 0
+        }
+        run += glyph
       }
-      current = rest
+      current = word.slice(from)
+      taken = run
     }
     push()
   }

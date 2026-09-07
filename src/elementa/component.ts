@@ -1,7 +1,7 @@
 import { type ColorConstraint, Constraint, ConstantColorConstraint, PixelConstraint } from './constraints'
 import { type Color, TRANSPARENT } from './color'
 import type { Effect } from './effects'
-import { invalidateLayout } from './frame'
+import { invalidateLayout, islands } from './frame'
 import { BasicState, type State } from './state'
 
 export interface Constraints {
@@ -42,12 +42,20 @@ export class UIComponent {
   element: HTMLElement | null = null
 
   get live(): boolean {
-    return false
+    return this.color.moving
   }
 
   onClick: ((event: MouseEvent) => void) | null = null
 
+  onPress: ((event: PointerEvent) => void) | null = null
+
+  onRightClick: ((event: MouseEvent) => void) | null = null
+
+  cursor: string | null = null
+
   onDrag: ((point: { x: number; y: number; width: number; height: number }) => void) | null = null
+
+  onDragEnd: (() => void) | null = null
   dragCursor: string | null = null
   onHover: ((hovered: boolean) => void) | null = null
 
@@ -55,21 +63,57 @@ export class UIComponent {
 
   index = 0
 
+  culled = false
+
+  culledBelow = false
+  private bound = false
+
+  holdsScrollBound = false
+
+  get scrollBound(): boolean {
+    return this.bound
+  }
+
+  set scrollBound(value: boolean) {
+    this.bound = value
+    if (value) this.markBound()
+  }
+
+  private markBound(): void {
+    for (let node = this.parent; node && !node.holdsScrollBound; node = node.parent) {
+      node.holdsScrollBound = true
+    }
+  }
+
+  sealed = false
+
+  lazy: (() => void) | null = null
+
   private touched(): void {
     for (let node: UIComponent | null = this; node && !node.treeDirty; node = node.parent) {
       node.treeDirty = true
     }
   }
 
+  private settle(): void {
+    for (let node: UIComponent | null = this.parent ?? this; node; node = node.parent) {
+      if (node.sealed) {
+        islands.add(node)
+        return
+      }
+    }
+    invalidateLayout()
+  }
+
   constrain(constraints: Constraints): this {
     Object.assign(this, constraints)
-    invalidateLayout()
+    this.settle()
     return this
   }
 
   setColor(value: Color | State<Color>): this {
     this.color = new ConstantColorConstraint(value)
-    invalidateLayout()
+    this.settle()
     return this
   }
 
@@ -78,7 +122,10 @@ export class UIComponent {
     return this
   }
 
+  disposed = false
+
   dispose(): void {
+    this.disposed = true
     for (const child of this.children) child.dispose()
     for (const disposer of this.disposers) disposer()
     this.disposers.length = 0
@@ -86,7 +133,9 @@ export class UIComponent {
 
   effect(effect: Effect): this {
     this.effects.push(effect)
-    invalidateLayout()
+
+    if (this.sealed) islands.add(this)
+    else this.settle()
     return this
   }
 
@@ -95,7 +144,7 @@ export class UIComponent {
     child.index = this.children.length
     this.children.push(child)
     this.touched()
-    invalidateLayout()
+    child.settle()
     return this
   }
 
@@ -106,6 +155,8 @@ export class UIComponent {
 
   childOf(parent: UIComponent): this {
     parent.addChild(this)
+
+    if (this.bound || this.holdsScrollBound) this.markBound()
     return this
   }
 
@@ -115,8 +166,8 @@ export class UIComponent {
       parent.children.splice(this.index, 1)
       for (let n = this.index; n < parent.children.length; n++) parent.children[n].index = n
       parent.touched()
+      this.settle()
       this.parent = null
-      invalidateLayout()
     }
     return this
   }
@@ -136,6 +187,12 @@ export class UIComponent {
     }
     this.children.length = 0
     this.touched()
+    for (let node: UIComponent | null = this; node; node = node.parent) {
+      if (node.sealed) {
+        islands.add(node)
+        return this
+      }
+    }
     invalidateLayout()
     return this
   }
@@ -180,6 +237,10 @@ export class UIComponent {
     for (const effect of this.effects) effect.invalidate()
     for (const child of this.children) child.invalidate()
   }
+
+  released = false
+
+  release(): void {}
 
   *walk(): Generator<UIComponent> {
     yield this

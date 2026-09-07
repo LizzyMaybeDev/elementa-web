@@ -1,6 +1,6 @@
-
 import { BasicState } from '../elementa/state'
 import { type Color, hex } from '../elementa/color'
+import { saying } from '../elementa/rich'
 
 const SLOTS = [
   'primary',
@@ -224,6 +224,17 @@ export const EMBER: ThemeDefinition = {
 }
 
 export const THEMES: ThemeDefinition[] = [VIGILANCE, DRACULA, MOCHA, NORD, EMBER, LIGHT]
+
+export const inkOf = (palette: Palette) =>
+  saying({
+    gold: palette.tierLegendary,
+    purple: palette.tierEpic,
+    blue: palette.textActive,
+    green: palette.tierUncommon,
+    red: palette.textWarning,
+    white: palette.textHighlight,
+    grey: palette.textDisabled,
+  })
 
 export function createPalette(theme: ThemeDefinition = VIGILANCE): Palette {
   return Object.fromEntries(SLOTS.map((slot) => [slot, new BasicState(hex(theme[slot]))])) as Palette

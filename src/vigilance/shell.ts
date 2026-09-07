@@ -1,9 +1,9 @@
-
 import {
   UIBlock,
   UIContainer,
   UIText,
   UIWrappedText,
+  basic,
   center,
   childBasedSize,
   fill,
@@ -19,10 +19,14 @@ import {
 import type { UIComponent } from '../elementa/component'
 import type { Constraint } from '../elementa/constraints'
 import type { BasicState, State } from '../elementa/state'
-import { Animations, eased, tint } from '../elementa/animation'
-import { type Color, lerp } from '../elementa/color'
+import { tint } from '../elementa/animation'
+import { type Color, lerp, toCss, withAlpha } from '../elementa/color'
 import { ConstantColorConstraint } from '../elementa/constraints'
 import {
+  bloom,
+  DrawerEffect,
+  EdgeEffect,
+  LAYERS,
   LayerEffect,
   LightEffect,
   OutlineEffect,
@@ -30,10 +34,16 @@ import {
   ScissorEffect,
   ScrollEffect,
   ShowEffect,
+  TransitionEffect,
+  TurnEffect,
   scrollMetrics,
 } from '../elementa/effects'
 import { UITextInput, onUnfocusedType } from '../elementa/input'
-import { BasicState as MutableState, derived } from '../elementa/state'
+import type { MarkName } from '../elementa/marks'
+import { type Piece, UIRich } from '../elementa/rich'
+import { inkOf } from '../theme/palette'
+import { BasicState as MutableState, derived, toState } from '../elementa/state'
+import { measureText } from '../elementa/font'
 import type { Palette } from '../theme/palette'
 
 export const METRICS = {
@@ -57,18 +67,20 @@ export const CONTROL_INSET = 12
 const sidebarWidth = () => atMost(percent(METRICS.sidebar), pixels(SIDEBAR_MAX))
 
 export interface NavGroup {
-  label: string
+  label: string | State<string>
   accent?: keyof Palette
   pulse?: boolean
   off?: string
+
+  mark?: MarkName
   children: string[]
+
+  pointsTo?: number
 }
 
-export class PulsingText extends UIText {
-  override get live(): boolean {
-    return true
-  }
-}
+const SLIDE = 4
+
+const HELD = 0.4
 
 const PULSE = 3
 
@@ -95,8 +107,15 @@ export interface ShellOptions {
   entries: NavEntry[]
   selected: () => number
   onSelect: (index: number) => void
-  action?: { label: string; onPress: () => void }
+
+  actions?: { label: string | State<string>; onPress: () => void; accent?: State<Color> }[]
+
+  opens?: (close: () => void) => () => void
   searchPlaceholder?: string
+
+  onSubmit?: () => void
+
+  searchable?: boolean
   size?: { width: number; height: number }
   scrollFade?: number | State<number>
   compact?: boolean
@@ -114,6 +133,8 @@ export interface PressOptions {
   enabled?: () => boolean
   scale?: number
   height?: number
+
+  accent?: State<Color>
 }
 
 export function pressable(
@@ -123,7 +144,7 @@ export function pressable(
   onPress: () => void,
   options: PressOptions = {},
 ): UIBlock {
-  const { loud = false, enabled, scale, height = 15 } = options
+  const { loud = false, enabled, scale, height = 15, accent } = options
   const box = new UIBlock().constrain({
     width: typeof width === 'number' ? pixels(width) : width,
     height: pixels(height),
@@ -140,16 +161,31 @@ export function pressable(
       ).get(),
     ),
   )
-  box.effect(new OutlineEffect(palette.componentBorder))
-  box.effect(new LightEffect(palette.textHighlight))
+  box.effect(new OutlineEffect(accent ?? palette.componentBorder))
 
-  const caption = new (loud ? PulsingText : UIText)(label, {
-    scale,
-    color: tint(() => (open() ? palette.textHighlight : palette.textDisabled).get()),
+  box.sealed = true
+  box.effect(new LightEffect(accent ?? palette.textHighlight))
+
+  const wanted = scale ?? 1
+  const held = toState(label)
+  const fitted = derived(() => {
+    const room = box.getWidth() - 8
+    if (room <= 0) return wanted
+    const drawn = measureText(held.get(), wanted)
+    return drawn <= room ? wanted : Math.max(wanted * 0.6, (room / drawn) * wanted)
+  })
+
+  const caption = new UIText(label, {
+    scale: fitted,
+    color: tint(() => (!open() ? palette.textDisabled : (accent ?? palette.textHighlight)).get()),
   })
   if (loud) liveColour(caption, rainbow(palette))
   caption.constrain({ x: center(), y: center() }).childOf(box)
 
+  box.onPress = (event) => {
+    if (!open()) return
+    bloom(box.element, event, toCss(withAlpha((accent ?? palette.textHighlight).get(), 90)))
+  }
   box.onClick = () => {
     if (open()) onPress()
   }
@@ -163,14 +199,30 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
   const fade = options.scrollFade ?? 20
 
   const menu = new MutableState(!compact)
-  const openness = eased(() => (menu.get() ? 1 : 0), {
-    seconds: 0.22,
-    easing: Animations.OUT_EXP,
-  })
-  const drawerWidth = () => scaled(compact ? pixels(SIDEBAR_MAX) : sidebarWidth(), openness)
+
+  const drawerWidth = () => (compact ? pixels(SIDEBAR_MAX) : sidebarWidth())
+  const drawer = (component: UIComponent): void => {
+    if (compact) component.effect(new DrawerEffect(menu, SIDEBAR_MAX + DIVIDER * 2))
+  }
+  let leaveMenu: (() => void) | null = null
+
+  const shut = (): void => {
+    leaveMenu?.()
+    leaveMenu = null
+    menu.set(false)
+  }
+  const toggle = (): void => {
+    if (menu.get()) {
+      shut()
+      return
+    }
+    menu.set(true)
+    leaveMenu = (options.opens ?? ((close) => close))(() => menu.set(false))
+  }
+
   const choose = (index: number): void => {
     options.onSelect(index)
-    if (compact) menu.set(false)
+    if (compact) shut()
   }
 
   new UIBlock(palette.mainBackground)
@@ -189,7 +241,7 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
   const titleBar = new UIContainer()
     .constrain({ width: percent(1), height: pixels(TITLE_BAR) })
     .childOf(container)
-  titleBar.effect(new LayerEffect(1))
+  titleBar.effect(new LayerEffect(LAYERS.titleBar))
 
   const edge = (x: Constraint = pixels(0)) =>
     new UIBlock(palette.componentHighlight)
@@ -210,7 +262,7 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
   edge(pixels(0, true))
 
   if (compact) {
-    pressable(palette, 'Menu', 40, () => menu.set(!menu.get()))
+    pressable(palette, 'Menu', 40, toggle)
       .constrain({ x: pixels(10), y: center() })
       .childOf(titleContent)
   } else {
@@ -240,51 +292,56 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
     })
     .childOf(controlsContent)
 
-  const search = new UIBlock(palette.mainBackground)
-    .constrain({
-      x: sibling(6),
-      width: pixels(compact ? 60 : 110),
-      height: percent(1),
-    })
-    .childOf(right)
-  search.effect(new OutlineEffect(palette.componentBorder))
-
   const input = new UITextInput({
     placeholder: options.searchPlaceholder ?? 'Search...',
   })
-  input
-    .constrain({
-      x: pixels(6),
-      y: center(),
-      width: minus(percent(1), pixels(12)),
-      height: pixels(9),
-    })
-    .setColor(palette.text)
-    .childOf(search)
 
-  search.onClick = () => input.focus()
+  if (options.searchable !== false) {
+    const search = new UIBlock(palette.mainBackground)
+      .constrain({
+        x: sibling(6),
 
-  const stopTyping = onUnfocusedType((event) => {
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
-      event.preventDefault()
+        width: basic(() => Math.min(compact ? 60 : 90, Math.max(50, controlsContent.getWidth() * 0.28))),
+        height: percent(1),
+      })
+      .childOf(right)
+    search.effect(new OutlineEffect(palette.componentBorder))
+
+    search.onClick = () => input.focus()
+
+    input
+      .constrain({
+        x: pixels(6),
+        y: center(),
+        width: minus(percent(1), pixels(12)),
+        height: pixels(9),
+      })
+      .setColor(palette.text)
+      .childOf(search)
+    input.onSubmit = () => options.onSubmit?.()
+
+    const stopTyping = onUnfocusedType((event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
+        event.preventDefault()
+        input.focus()
+        return true
+      }
+      if (event.ctrlKey || event.metaKey || event.altKey || event.key.length !== 1) return false
       input.focus()
+      input.handleKey(event)
       return true
-    }
-    if (event.ctrlKey || event.metaKey || event.altKey || event.key.length !== 1) return false
-    input.focus()
-    input.handleKey(event)
-    return true
-  })
-  container.onDispose(stopTyping)
-  container.onDispose(() => input.blur())
+    })
+    container.onDispose(stopTyping)
+    container.onDispose(() => input.blur())
+  }
 
-  if (options.action) {
-    pressable(palette, options.action.label, 62, options.action.onPress)
+  for (const action of options.actions ?? []) {
+    pressable(palette, action.label, 62, action.onPress, { accent: action.accent })
       .constrain({ x: sibling(6), y: center() })
       .childOf(right)
   }
 
-  if (compact) edge(plus(drawerWidth(), pixels(DIVIDER)))
+  if (compact) drawer(edge(plus(drawerWidth(), pixels(DIVIDER))))
 
   const bottom = new UIContainer()
     .constrain({ y: sibling(0), width: percent(1), height: fill() })
@@ -307,6 +364,7 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
         height: pixels(derived(() => (metrics()?.fraction ?? 0) * divider.getHeight())),
       })
       .childOf(divider)
+    thumb.scrollBound = true
 
     divider.dragCursor = 'ns-resize'
     divider.onDrag = ({ y, height }) => {
@@ -327,18 +385,29 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
 
   seam()
 
-  const sidebar = new UIContainer()
+  const sidebar = (compact ? new UIBlock(palette.mainBackground) : new UIContainer())
     .constrain({ x: sibling(0), width: drawerWidth(), height: percent(1) })
     .childOf(bottom)
-  sidebar.effect(new ScrollEffect(fade, false))
+  sidebar.effect(new ScrollEffect(fade, false, palette.mainBackground))
 
   const middleSeam = seam(sibling(0))
   scrollbar(middleSeam, sidebar)
 
+  if (compact) {
+    sidebar.effect(new LayerEffect(1))
+    middleSeam.effect(new LayerEffect(1))
+    drawer(sidebar)
+    drawer(middleSeam)
+  }
+
   const content = new UIContainer()
-    .constrain({ x: sibling(0), width: fill(false), height: percent(1) })
+    .constrain({
+      x: compact ? pixels(DIVIDER) : sibling(0),
+      width: compact ? minus(percent(1), pixels(DIVIDER * 2)) : fill(false),
+      height: percent(1),
+    })
     .childOf(bottom)
-  content.effect(new ScrollEffect(fade, false))
+  content.effect(new ScrollEffect(fade, false, palette.mainBackground))
 
   scrollbar(seam(pixels(0, true)), content)
 
@@ -353,9 +422,11 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
 
   let arriving = 0
 
+  const say = inkOf(palette)
+
   const row = (
     parent: UIComponent,
-    text: string,
+    text: string | State<string>,
     accent: keyof Palette | null,
     isSelected: () => boolean,
     onPress: () => void,
@@ -363,6 +434,9 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
     pulse = false,
     off?: string,
     order = arriving++,
+    mark?: MarkName,
+
+    lit = (): number => (isSelected() ? 1 : 0),
   ): UIContainer => {
     const hovered = new MutableState(false)
 
@@ -385,6 +459,12 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
     label.onHover = (over) => hovered.set(over)
     label.effect(new LightEffect(palette.textHighlight))
 
+    label.effect(
+      new EdgeEffect(derived(lit), accent ? palette[accent] : palette.textActive, DIVIDER),
+    )
+
+    label.sealed = true
+
     const moving = pulse
     const colour = () => {
       if (off) return palette.textDisabled.get()
@@ -392,11 +472,27 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
       if (isSelected()) return palette.textActive.get()
       return (hovered.get() ? palette.textHighlight : palette.text).get()
     }
-    const caption = new (moving ? PulsingText : UIText)(text, {
-      color: tint(colour),
+
+    const said = toState(text)
+    let held = { words: '', pieces: [] as Piece[] }
+    const pieces = derived(() => {
+      const words = said.get()
+      if (words !== held.words) {
+        held = { words, pieces: say(mark ? `${words} {${mark}}` : words) }
+      }
+      return held.pieces
     })
+
+    const caption = new UIRich(pieces, { colour: tint(colour) })
     if (moving) liveColour(caption, rainbow(palette))
-    caption.constrain({ x: pixels(10 + indent), y: center() }).childOf(label)
+
+    caption
+      .constrain({
+        x: pixels(derived(() => 10 + indent + (isSelected() || hovered.get() ? SLIDE : 0))),
+        y: center(),
+      })
+      .childOf(label)
+    caption.effect(new TransitionEffect('left', 0.18))
     caption.effect(new RiseEffect(order))
 
     if (off) {
@@ -417,9 +513,20 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
           width: minus(percent(1), pixels(8)),
         })
         .childOf(tip)
+
+      let showing: ReturnType<typeof setTimeout> | undefined
+      label.onClick = () => {
+        hovered.set(true)
+        clearTimeout(showing)
+        showing = setTimeout(() => hovered.set(false), 2000)
+      }
+      label.onDispose(() => clearTimeout(showing))
       return label
     }
 
+    label.onPress = (event) => {
+      bloom(label.element, event, toCss(withAlpha(palette.textHighlight.get(), 70)))
+    }
     label.onClick = onPress
     return label
   }
@@ -427,10 +534,12 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
   const open = new MutableState(-1)
   let leaf = 0
 
+  const rows: UIContainer[] = []
+
   options.entries.forEach((entry, groupIndex) => {
     if (typeof entry === 'string') {
       const index = leaf++
-      row(
+      rows[groupIndex] = row(
         list,
         entry,
         null,
@@ -442,7 +551,7 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
 
     if (entry.children.length === 0) {
       const index = leaf++
-      row(
+      rows[groupIndex] = row(
         list,
         entry.label,
         entry.accent ?? null,
@@ -451,6 +560,8 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
         0,
         entry.pulse,
         entry.off,
+        arriving++,
+        entry.mark,
       )
       new UIBlock(palette.componentHighlight)
         .constrain({ y: sibling(0), width: percent(1), height: pixels(1) })
@@ -469,8 +580,27 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
       entry.accent ?? null,
       () => options.selected() >= first && options.selected() < first + entry.children.length,
       () => {
+        const inside =
+          options.selected() >= first && options.selected() < first + entry.children.length
+
+        if (inside && open.get() === groupIndex) {
+          open.set(-1)
+          return
+        }
         open.set(groupIndex)
-        choose(first)
+        if (!inside) choose(first)
+      },
+      0,
+      entry.pulse,
+      entry.off,
+      arriving++,
+      entry.mark,
+
+      () => {
+        const inside =
+          options.selected() >= first && options.selected() < first + entry.children.length
+        if (!inside) return 0
+        return open.get() === groupIndex ? HELD : 1
       },
     )
 
@@ -478,18 +608,15 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
       .constrain({ y: sibling(0), width: percent(1), height: pixels(1) })
       .childOf(list)
 
-    const openness = eased(() => (open.get() === groupIndex ? 1 : 0), {
-      seconds: 0.22,
-      easing: Animations.OUT_EXP,
-    })
     const drawer = new UIContainer()
       .constrain({
         y: sibling(0),
         width: percent(1),
-        height: scaled(childBasedSize(), openness),
+        height: scaled(childBasedSize(), derived(() => (open.get() === groupIndex ? 1 : 0))),
       })
       .childOf(list)
     drawer.effect(new ScissorEffect())
+    drawer.effect(new TransitionEffect('height', 0.22))
 
     const heading = arriving - 1
     entry.children.forEach((child, at) => {
@@ -515,6 +642,52 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
     footer.effect(new RiseEffect(arriving + 1))
     options.sidebarFooter(footer)
   }
+
+  const arrows = options.entries
+    .map((entry, at) => (typeof entry === 'string' || entry.pointsTo === undefined ? null : { at, to: entry.pointsTo }))
+    .filter((held): held is { at: number; to: number } => held !== null)
+    .map((held) => ({ ...held, top: Math.min(held.at, held.to), bottom: Math.max(held.at, held.to) }))
+    .sort((a, b) => a.top - b.top || a.bottom - b.bottom)
+  const lanes: number[] = []
+  for (const held of arrows) {
+    let lane = lanes.findIndex((busyUntil) => busyUntil < held.top)
+    if (lane < 0) lane = lanes.push(0) - 1
+    lanes[lane] = held.bottom
+    const from = rows[held.at]
+    const to = rows[held.to]
+    if (!from || !to) continue
+    const x = 2 + (lane % 4) * 2
+    const lit = () => {
+      const chosen = options.selected()
+      return chosen === held.at || chosen === held.to
+    }
+    const colour = tint(() => (lit() ? palette.tierLegendary.get() : withAlpha(palette.textDisabled.get(), 70)))
+    const mid = (row_: UIContainer) => row_.getTop() - list.getTop() + row_.getHeight() / 2
+    const top = () => Math.min(mid(from), mid(to))
+    const bottom = () => Math.max(mid(from), mid(to))
+    new UIBlock(colour)
+      .constrain({
+        x: pixels(x),
+        y: pixels(derived(top)),
+        width: pixels(1),
+        height: pixels(derived(() => Math.max(1, bottom() - top()))),
+      })
+      .childOf(list)
+
+    new UIBlock(colour)
+      .constrain({ x: pixels(x), y: pixels(derived(() => mid(from))), width: pixels(4), height: pixels(1) })
+      .childOf(list)
+    const head = new UIBlock(colour).constrain({
+      x: pixels(x - 1),
+      y: pixels(derived(() => mid(to) - 1)),
+      width: pixels(3),
+      height: pixels(3),
+    })
+    head.effect(new TurnEffect())
+    head.childOf(list)
+  }
+
+  for (const child of list.children) child.effect(new TransitionEffect('top', 0.22))
 
   return { content, search: input.value }
 }

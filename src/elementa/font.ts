@@ -1,16 +1,22 @@
-import { ADVANCES, FIRST } from './advances'
-
 export const FAMILY = 'Minecraft'
 
 export const LINE_HEIGHT = 9
 
 const DEFAULT = 6
 
-export function advanceOf(code: number): number {
-  const at = code - FIRST
-  if (at < 0 || at >= ADVANCES.length) return DEFAULT
+let widths = ''
+let first = 32
 
-  const digit = ADVANCES.charCodeAt(at)
+export function setAdvances(table: string, from = 32): void {
+  widths = table
+  first = from
+}
+
+export function advanceOf(code: number): number {
+  const at = code - first
+  if (at < 0 || at >= widths.length) return DEFAULT
+
+  const digit = widths.charCodeAt(at)
   return digit <= 57 ? digit - 48 : digit - 87
 }
 

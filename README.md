@@ -34,9 +34,12 @@ const panel = new UIBlock(palette.componentBackground)
       effects.ts     outlines, clipping, scrolling, arrivals, a pointer light
       image.ts       cached images and ImageAspectConstraint
       input.ts       UITextInput
-      font.ts        the game's bitmap font, drawn glyph by glyph
+      font.ts        text measuring, against a table of glyph widths
       text.ts        line breaking, ported from getStringSplitToWidth
+      rich.ts        one line of writing with colours and marks in it
+      marks.ts       small pixel drawings that stand among letters
       frame.ts       when a layout pass is owed
+      device.ts      whether this is a phone
     src/vigilance/   the settings screen, its chrome and its controls
     src/theme/       palette slots and the themes that fill them
 
@@ -64,7 +67,9 @@ abstract over that. Here an `Axis` descriptor lets each rule be written once
 and applied to both, so `CramSiblingConstraint` and friends are single
 implementations rather than mirrored pairs.
 
-Not ported: `AnimatingConstraints`, scroll containers, markdown and SVG.
+Not ported: `AnimatingConstraints`, scroll containers, markdown and SVG. The
+font's own glyph widths are not here either, since they are the font's. Pass
+your own to `setAdvances`.
 
 ## Licence
 

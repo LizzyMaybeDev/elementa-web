@@ -46,15 +46,12 @@ export class UIComponent {
   }
 
   onClick: ((event: MouseEvent) => void) | null = null
-
   onPress: ((event: PointerEvent) => void) | null = null
-
   onRightClick: ((event: MouseEvent) => void) | null = null
 
   cursor: string | null = null
 
   onDrag: ((point: { x: number; y: number; width: number; height: number }) => void) | null = null
-
   onDragEnd: (() => void) | null = null
   dragCursor: string | null = null
   onHover: ((hovered: boolean) => void) | null = null
@@ -64,10 +61,8 @@ export class UIComponent {
   index = 0
 
   culled = false
-
   culledBelow = false
   private bound = false
-
   holdsScrollBound = false
 
   get scrollBound(): boolean {
@@ -84,7 +79,6 @@ export class UIComponent {
       node.holdsScrollBound = true
     }
   }
-
   sealed = false
 
   lazy: (() => void) | null = null
@@ -133,7 +127,6 @@ export class UIComponent {
 
   effect(effect: Effect): this {
     this.effects.push(effect)
-
     if (this.sealed) islands.add(this)
     else this.settle()
     return this
@@ -155,7 +148,6 @@ export class UIComponent {
 
   childOf(parent: UIComponent): this {
     parent.addChild(this)
-
     if (this.bound || this.holdsScrollBound) this.markBound()
     return this
   }

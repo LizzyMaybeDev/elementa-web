@@ -4,7 +4,6 @@ const SPACE = 32
 
 export function splitToWidth(text: string, maxWidth: number): string[] {
   const space = advanceOf(SPACE)
-
   const limit = Math.max(1, maxWidth - space)
 
   const lines: string[] = []

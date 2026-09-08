@@ -6,9 +6,7 @@ import { setStyle } from './style'
 interface Entry {
   image: HTMLImageElement
   promise: Promise<HTMLImageElement>
-
   ready: boolean
-
   drawn: boolean
 }
 
@@ -26,7 +24,6 @@ export function loadImage(src: string): Promise<HTMLImageElement> {
     promise: new Promise((resolve, reject) => {
       image.onload = () => {
         entry.ready = true
-
         const done = (): void => {
           entry.drawn = true
           invalidateLayout()
@@ -154,7 +151,6 @@ export class UIImage extends UIComponent {
   }
 
   override paint(element: HTMLElement): void {
-
     if (this.src && !decoded(this.src) && element.style.backgroundImage) {
       setStyle(element, 'image-rendering', this.pixelated ? 'pixelated' : 'auto')
       return

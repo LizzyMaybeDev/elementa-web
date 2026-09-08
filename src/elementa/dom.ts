@@ -1,6 +1,6 @@
 import { UIComponent, Window } from './component'
 import { setScaleFactor } from './constraints'
-import { measureScrollers, rehome, scrollMetrics, shine } from './effects'
+import { measureScrollers, passDone, rehome, scrollMetrics, shine } from './effects'
 import { building, invalidateScroll, islands, passOwed, rousedNow, setReading } from './frame'
 import { setStyle } from './style'
 import { touch } from './device'
@@ -13,9 +13,7 @@ interface Clip {
 }
 
 const MARGIN = 200
-
 const AHEAD = 900
-
 const BUDGET = 8
 
 export interface RendererOptions {
@@ -74,9 +72,7 @@ export class DomRenderer {
   private running = false
   private deadline = Infinity
   private margin = MARGIN
-
   private readonly clips = new WeakMap<UIComponent, Clip>()
-
   private warmable = true
   private created = 0
 
@@ -90,7 +86,6 @@ export class DomRenderer {
   autoScale: boolean
 
   compact = false
-
   compactZoom = 1
   private readonly compactBelow: number
   private readonly compactLogicalWidth: number
@@ -117,7 +112,6 @@ export class DomRenderer {
     host.style.overflow = 'hidden'
     const rect = host.getBoundingClientRect()
     this.size = { width: rect.width, height: rect.height }
-
     this.compact = rect.width < this.compactBelow
 
     host.addEventListener('scroll', invalidateScroll, { capture: true, passive: true })
@@ -126,9 +120,7 @@ export class DomRenderer {
 
   private delegate(): void {
     const host = this.host
-
     const words = (): string => globalThis.getSelection?.()?.toString() ?? ''
-
     let picked = ''
     const owner = (target: EventTarget | null): UIComponent | null => {
       for (let node = target as HTMLElement | null; node && node !== host; node = node.parentElement) {
@@ -139,7 +131,6 @@ export class DomRenderer {
     }
 
     host.addEventListener('click', (event) => {
-
       if (words() && words() !== picked) return
       for (let held = owner(event.target); held; held = held.parent) {
         if (!held.onClick) continue
@@ -203,7 +194,6 @@ export class DomRenderer {
       for (const left of was) if (!now.includes(left)) left.onHover?.(false)
       for (const entered of now) if (!was.includes(entered)) entered.onHover?.(true)
     }
-
     if (touch) return
     let lastX = NaN
     let lastY = NaN
@@ -221,7 +211,6 @@ export class DomRenderer {
     const rect = this.size
 
     this.compact = rect.width < this.compactBelow
-
     if (this.compact && this.autoScale) {
       const ratio = globalThis.devicePixelRatio || 1
       const fit = Math.max(1, Math.floor((rect.width * ratio) / this.compactLogicalWidth)) / ratio
@@ -241,6 +230,7 @@ export class DomRenderer {
     this.live = []
     this.deadline = performance.now() + BUDGET
     this.position(this.window_, null, this.whole(), false)
+    passDone()
     this.warmable = true
     this.onFrame?.()
   }
@@ -249,6 +239,7 @@ export class DomRenderer {
     measureScrollers()
     this.deadline = performance.now() + BUDGET
     this.position(this.window_, null, this.whole(), true)
+    passDone()
     this.warmable = true
     this.onFrame?.()
   }
@@ -301,7 +292,7 @@ export class DomRenderer {
     for (const existing of Array.from(element.children)) {
       const child = existing as HTMLElement
       if (!this.managed.has(child) || wanted.has(child)) continue
-      if (child.classList.contains('fading') || child.classList.contains('leaving')) continue
+      if (child.classList.contains('fading') || child.classList.contains('leaving') || child.classList.contains('going')) continue
       element.removeChild(child)
     }
   }
@@ -312,10 +303,8 @@ export class DomRenderer {
     clip: Clip,
     scrolling: boolean,
   ): void {
-
     const home = parent ? parent.element : this.host
     if (!home) return
-
     setReading(component)
     let made = !this.elements.has(component)
     const element = this.ensure(component, home)
@@ -341,7 +330,6 @@ export class DomRenderer {
     if (scrolling) {
       const tracks = component.scrollBound || component.effects.some((effect) => effect.scrolls)
       if (tracks) component.invalidate()
-
       else if (component.holdsScrollBound) {
         this.descend(component, element, clip, true, false)
         return
@@ -381,7 +369,6 @@ export class DomRenderer {
           ? 'pointer'
           : '')
     setStyle(element, 'cursor', cursor)
-
     setStyle(element, 'touch-action', component.onDrag ? 'none' : '')
 
     if (component.live) this.live.push(component)
@@ -411,7 +398,6 @@ export class DomRenderer {
   private alone(island: UIComponent): void {
     const clip = this.clips.get(island)
     const home = island.parent?.element
-
     if (!clip || !home || island.element?.parentElement !== home) return
     island.invalidate()
     this.position(island, island.parent, clip, false)
@@ -457,7 +443,6 @@ export class DomRenderer {
     component.culled = out
     if (out) {
       component.culledBelow = false
-
       if (!component.released && this.outside(component, clip, AHEAD)) {
         component.released = true
         for (const node of component.walk()) node.release()
@@ -498,7 +483,6 @@ export class DomRenderer {
     const loop = () => {
       if (!this.running) return
       try {
-
         shine()
         const pass = passOwed(performance.now())
         if (pass === 'layout') this.render()

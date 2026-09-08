@@ -8,7 +8,6 @@ const SELECTION_BACKGROUND = rgba(255, 255, 255)
 const SELECTION_FOREGROUND = rgba(64, 139, 229)
 const CURSOR = rgba(255, 255, 255)
 const CURSOR_BLINK_SECONDS = 1
-
 const BASELINE = 7
 
 void document.fonts?.ready.then(invalidateLayout)
@@ -31,7 +30,6 @@ function ensureListening(): void {
 
   document.addEventListener('keydown', (event) => {
     if (focused) {
-
       if (event.target === keyboard) {
         if (event.key === 'Enter' || event.key === 'Escape') {
           const done = focused
@@ -86,7 +84,6 @@ function raiseKeyboard(owner: UITextInput): void {
     })
     keyboard.addEventListener('blur', () => focused?.blur())
   }
-
   const box = owner.element?.getBoundingClientRect()
   if (box) {
     keyboard.style.left = `${box.left}px`
@@ -119,7 +116,6 @@ export class UITextInput extends UIComponent {
   }
 
   readonly value = new BasicState('')
-
   onSubmit: (() => void) | null = null
   readonly placeholder: string
   readonly scale: number
@@ -366,7 +362,6 @@ export class UITextInput extends UIComponent {
     ctx.translate(-this.scrollOffset, 0)
 
     const color = this.getColor()
-
     const draw = (value: string, x: number, tone: Color): void => {
       if (!value) return
       ctx.save()

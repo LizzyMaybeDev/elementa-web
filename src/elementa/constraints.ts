@@ -412,7 +412,6 @@ export class BasicConstraint extends Constraint {
 export interface ColorConstraint {
   cachedValue: Color
   recalculate: boolean
-
   readonly moving: boolean
   getColor(component: UIComponent): Color
   invalidate(): void

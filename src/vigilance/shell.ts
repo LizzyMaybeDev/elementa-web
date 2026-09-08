@@ -1,3 +1,4 @@
+
 import {
   UIBlock,
   UIContainer,
@@ -71,10 +72,8 @@ export interface NavGroup {
   accent?: keyof Palette
   pulse?: boolean
   off?: string
-
   mark?: MarkName
   children: string[]
-
   pointsTo?: number
 }
 
@@ -107,14 +106,10 @@ export interface ShellOptions {
   entries: NavEntry[]
   selected: () => number
   onSelect: (index: number) => void
-
   actions?: { label: string | State<string>; onPress: () => void; accent?: State<Color> }[]
-
   opens?: (close: () => void) => () => void
   searchPlaceholder?: string
-
   onSubmit?: () => void
-
   searchable?: boolean
   size?: { width: number; height: number }
   scrollFade?: number | State<number>
@@ -133,7 +128,6 @@ export interface PressOptions {
   enabled?: () => boolean
   scale?: number
   height?: number
-
   accent?: State<Color>
 }
 
@@ -162,7 +156,6 @@ export function pressable(
     ),
   )
   box.effect(new OutlineEffect(accent ?? palette.componentBorder))
-
   box.sealed = true
   box.effect(new LightEffect(accent ?? palette.textHighlight))
 
@@ -199,13 +192,11 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
   const fade = options.scrollFade ?? 20
 
   const menu = new MutableState(!compact)
-
   const drawerWidth = () => (compact ? pixels(SIDEBAR_MAX) : sidebarWidth())
   const drawer = (component: UIComponent): void => {
     if (compact) component.effect(new DrawerEffect(menu, SIDEBAR_MAX + DIVIDER * 2))
   }
   let leaveMenu: (() => void) | null = null
-
   const shut = (): void => {
     leaveMenu?.()
     leaveMenu = null
@@ -300,13 +291,11 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
     const search = new UIBlock(palette.mainBackground)
       .constrain({
         x: sibling(6),
-
         width: basic(() => Math.min(compact ? 60 : 90, Math.max(50, controlsContent.getWidth() * 0.28))),
         height: percent(1),
       })
       .childOf(right)
     search.effect(new OutlineEffect(palette.componentBorder))
-
     search.onClick = () => input.focus()
 
     input
@@ -435,7 +424,6 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
     off?: string,
     order = arriving++,
     mark?: MarkName,
-
     lit = (): number => (isSelected() ? 1 : 0),
   ): UIContainer => {
     const hovered = new MutableState(false)
@@ -458,11 +446,9 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
       .childOf(parent)
     label.onHover = (over) => hovered.set(over)
     label.effect(new LightEffect(palette.textHighlight))
-
     label.effect(
       new EdgeEffect(derived(lit), accent ? palette[accent] : palette.textActive, DIVIDER),
     )
-
     label.sealed = true
 
     const moving = pulse
@@ -472,7 +458,6 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
       if (isSelected()) return palette.textActive.get()
       return (hovered.get() ? palette.textHighlight : palette.text).get()
     }
-
     const said = toState(text)
     let held = { words: '', pieces: [] as Piece[] }
     const pieces = derived(() => {
@@ -485,7 +470,6 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
 
     const caption = new UIRich(pieces, { colour: tint(colour) })
     if (moving) liveColour(caption, rainbow(palette))
-
     caption
       .constrain({
         x: pixels(derived(() => 10 + indent + (isSelected() || hovered.get() ? SLIDE : 0))),
@@ -513,7 +497,6 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
           width: minus(percent(1), pixels(8)),
         })
         .childOf(tip)
-
       let showing: ReturnType<typeof setTimeout> | undefined
       label.onClick = () => {
         hovered.set(true)
@@ -533,7 +516,6 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
 
   const open = new MutableState(-1)
   let leaf = 0
-
   const rows: UIContainer[] = []
 
   options.entries.forEach((entry, groupIndex) => {
@@ -582,7 +564,6 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
       () => {
         const inside =
           options.selected() >= first && options.selected() < first + entry.children.length
-
         if (inside && open.get() === groupIndex) {
           open.set(-1)
           return
@@ -595,7 +576,6 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
       entry.off,
       arriving++,
       entry.mark,
-
       () => {
         const inside =
           options.selected() >= first && options.selected() < first + entry.children.length
@@ -673,7 +653,6 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
         height: pixels(derived(() => Math.max(1, bottom() - top()))),
       })
       .childOf(list)
-
     new UIBlock(colour)
       .constrain({ x: pixels(x), y: pixels(derived(() => mid(from))), width: pixels(4), height: pixels(1) })
       .childOf(list)

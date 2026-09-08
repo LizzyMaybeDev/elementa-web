@@ -1,3 +1,4 @@
+
 import { UIComponent } from './component'
 import { type Color, toCss } from './color'
 import { Constraint, ConstantColorConstraint } from './constraints'
@@ -19,10 +20,9 @@ export type Words = {
   words: string
   colour?: State<Color>
   lit?: boolean
-
   onPress?: () => void
 }
-export type Mark = { mark: MarkName; colour?: State<Color> }
+export type Mark = { mark: MarkName; colour?: State<Color>; lit?: boolean }
 export type Piece = Words | Mark
 
 export type Inks = Record<string, State<Color>>
@@ -62,11 +62,11 @@ export function rich(said: string, inks: Inks): Piece[] {
         continue
       }
       flush()
-
       const mark = drawn as MarkName
       pieces.push({
         mark,
         colour: names.map((name) => inks[name]).find(Boolean) ?? inks[markInk(mark) ?? ''],
+        lit: names.includes('shine'),
       })
     } else {
       flush()
@@ -98,7 +98,6 @@ export interface RichOptions {
   scale?: number
   colour?: Color | State<Color>
   shadow?: boolean
-
   lineSpacing?: number
   centred?: boolean
 }
@@ -130,9 +129,7 @@ export class UIRich extends UIComponent {
   private readonly said: State<Piece[]>
   private laid: { pieces: Piece[]; width: number; lines: Piece[][] } | null = null
   private wrote = ''
-
-  private painted: { span: HTMLElement; piece: Piece; was: string }[] = []
-
+  private painted: { span: HTMLElement; ink: HTMLElement; piece: Piece; was: string }[] = []
   private taps: (() => void)[] = []
   readonly scale: number
   readonly shadow: boolean
@@ -177,15 +174,15 @@ export class UIRich extends UIComponent {
 
     setStyle(element, 'font-size', `${size}px`)
     setStyle(element, 'line-height', `${step}px`)
-
     setStyle(element, 'margin-top', `${(size - step) / 2}px`)
     setStyle(element, 'text-align', this.centred ? 'center' : '')
     setStyle(element, 'color', toCss(colour))
     setStyle(element, 'text-shadow', shadowFor(colour, pixel, this.shadow))
-    setStyle(element, 'clip-path', 'inset(-4px 0px -4px 0px)')
+    setStyle(element, '--glimmer', `${pixel}px`)
 
     const lines = this.lines()
-
+    const glow = lines.some((line) => line.some((piece) => isMark(piece) && piece.lit))
+    setStyle(element, 'clip-path', glow ? 'none' : `inset(${-pixel * 2}px 0px)`)
     const anything = lines.some((line) => line.some((piece) => !isMark(piece) && piece.onPress))
     this.onClick = anything ? this.press : null
     this.cursor = anything ? '' : null
@@ -205,7 +202,8 @@ export class UIRich extends UIComponent {
             span.classList.add('tap')
             this.taps.push(piece.onPress)
           }
-          this.painted.push({ span, piece, was: '' })
+          const ink = (span.firstElementChild as HTMLElement | null) ?? span
+          this.painted.push({ span, ink, piece, was: '' })
           element.appendChild(span)
         }
       })
@@ -220,8 +218,12 @@ export class UIRich extends UIComponent {
           : ''
       if (want === held.was) continue
       held.was = want
-      if (isMark(piece)) held.span.style.backgroundColor = want
-      else held.span.style.color = want
+      if (!isMark(piece)) {
+        held.span.style.color = want
+        continue
+      }
+      held.ink.style.backgroundColor = want
+      if (piece.lit) held.span.style.color = want
     }
   }
 
@@ -232,26 +234,35 @@ export class UIRich extends UIComponent {
 }
 
 const stamp = (piece: Piece): string =>
-  isMark(piece) ? `M${piece.mark}` : `T${piece.lit ? '~' : ''}${piece.words}`
+  isMark(piece) ? `M${piece.lit ? '~' : ''}${piece.mark}` : `T${piece.lit ? '~' : ''}${piece.words}`
 
 function write(piece: Piece): HTMLElement {
   const span = document.createElement('span')
 
   if (isMark(piece)) {
     const wide = MARKS[piece.mark].rows[0].length
-
     span.style.display = 'inline-block'
     span.style.width = `${wide / LINE_HEIGHT}em`
     span.style.height = `${markHeight(piece.mark) / LINE_HEIGHT}em`
     span.style.verticalAlign = `${-markDrop(piece.mark) / LINE_HEIGHT}em`
-    wear(span, piece.mark)
+    if (!piece.lit) {
+      wear(span, piece.mark)
+      return span
+    }
+    shimmer()
+    span.classList.add('glimmer')
+    const cut = document.createElement('span')
+    cut.style.display = 'block'
+    cut.style.width = '100%'
+    cut.style.height = '100%'
+    wear(cut, piece.mark)
+    span.appendChild(cut)
     return span
   }
 
   span.textContent = piece.words
   if (piece.lit) {
     shimmer()
-
     span.dataset.shine = piece.words
     span.classList.add('shining')
   }

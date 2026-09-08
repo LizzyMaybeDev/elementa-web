@@ -10,7 +10,6 @@ import type { SettingsConfig } from './screen'
 export interface AppSettings {
   theme: number
   guiScale: number
-
   zoom: number
   scrollFade: number
   reducedMotion: boolean
@@ -49,13 +48,11 @@ export function loadSettings(): AppSettings {
     const held = localStorage.getItem(STORED)
     if (!held) return settings
     const read = JSON.parse(held) as Partial<Record<keyof AppSettings, unknown>>
-
     for (const key of Object.keys(settings) as (keyof AppSettings)[]) {
       const value = read[key]
       if (typeof value === typeof settings[key]) (settings[key] as unknown) = value
     }
   } catch {
-
   }
   return clamp(settings)
 }
@@ -75,7 +72,6 @@ function remember(settings: AppSettings): void {
   try {
     localStorage.setItem(STORED, JSON.stringify(settings))
   } catch {
-
   }
 }
 
@@ -100,13 +96,11 @@ export interface ConfigDeps {
   palette: Palette
   renderer: DomRenderer
   fade: BasicState<number>
-
   onTheme?: (name: string, undo: () => void) => void
 }
 
 export function appConfig(deps: ConfigDeps): SettingsConfig {
   const { settings, palette, renderer, fade } = deps
-
   const kept = <T,>(change: (value: T) => void) => (value: T) => {
     change(value)
     remember(settings)
@@ -177,7 +171,6 @@ export function appConfig(deps: ConfigDeps): SettingsConfig {
               }),
             },
           },
-
           ...(touch
             ? []
             : [
@@ -201,7 +194,6 @@ export function appConfig(deps: ConfigDeps): SettingsConfig {
             control: {
               kind: 'slider',
               value: () => fade.get() / MAX_FADE,
-
               onChange: kept((value: number) => {
                 settings.scrollFade = absolute(value, 0, MAX_FADE)
                 fade.set(settings.scrollFade)

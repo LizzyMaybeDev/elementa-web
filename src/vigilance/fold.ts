@@ -1,3 +1,4 @@
+
 import {
   BasicState,
   UIBlock,
@@ -19,25 +20,17 @@ import { ScissorEffect, TransitionEffect } from '../elementa/effects'
 import type { Palette } from '../theme/palette'
 
 export interface FoldOptions {
-
   title: string | State<string>
-
   note?: string | State<string>
-
   tone: State<Color>
-
   ink?: State<Color>
-
   open?: boolean
-
   gap?: number
-
   onToggle?: (open: boolean) => void
 }
 
 export interface Fold {
   bar: UIContainer
-
   fold: UIContainer
   open: BasicState<boolean>
 }

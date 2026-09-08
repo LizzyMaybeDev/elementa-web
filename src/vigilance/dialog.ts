@@ -1,3 +1,4 @@
+
 import {
   UIBlock,
   UIContainer,
@@ -20,28 +21,23 @@ import { pressable } from './shell'
 export interface DialogOptions {
   width: Constraint
   height: Constraint
-
   scrolls?: boolean
-
   onClose?: () => void
 }
 
 export interface Dialog {
   scrim: UIBlock
   panel: UIBlock
-
   dismiss: () => void
 }
 
 const DIM = 232
 
 export function dialog(root: UIComponent, palette: Palette, options: DialogOptions): Dialog {
-
   const scrim = new UIBlock(derived(() => withAlpha(palette.mainBackground.get(), DIM)))
     .constrain({ width: percent(1), height: percent(1) })
     .childOf(root)
   scrim.onClick = () => {}
-
   scrim.effect(new LayerEffect(LAYERS.dialog))
   scrim.effect(new RiseEffect(0, false))
 
@@ -51,7 +47,6 @@ export function dialog(root: UIComponent, palette: Palette, options: DialogOptio
   panel.effect(new OutlineEffect(palette.componentBorder))
   if (options.scrolls) panel.effect(new ScrollEffect(0, false))
   panel.effect(new RiseEffect(0))
-
   panel.sealed = true
 
   let gone = false
@@ -76,7 +71,6 @@ export function titled(
   held: Dialog,
   title: string | State<string>,
   subtitle: string | State<string>,
-
   foot = 10,
 ): { head: UIContainer; body: UIContainer } {
   const head = new UIContainer()

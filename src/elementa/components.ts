@@ -55,9 +55,7 @@ class TextSizeConstraint extends Constraint {
 }
 
 export interface TextOptions {
-
   scale?: number | State<number>
-
   lit?: State<[number, number] | null>
   litColor?: Color | State<Color>
   shadow?: boolean
@@ -72,7 +70,6 @@ export class UIText extends UIComponent {
   private readonly scaleState: State<number>
   private readonly lit: State<[number, number] | null> | null
   private readonly litColor: State<Color> | null
-
   private runs: HTMLSpanElement[] | null = null
   readonly shadow: boolean
 
@@ -98,14 +95,12 @@ export class UIText extends UIComponent {
 
   override paint(element: HTMLElement, scale: number): void {
     const color = this.getColor()
-
     const pixel = this.scale * scale
     const text = this.getText()
 
     setStyle(element, 'font-size', `${LINE_HEIGHT * pixel}px`)
     setStyle(element, 'color', toCss(color))
     setStyle(element, 'text-shadow', shadowFor(color, pixel, this.shadow))
-
     setStyle(element, 'clip-path', 'inset(-4px 0px -4px 0px)')
 
     if (!this.lit) {
@@ -184,7 +179,6 @@ export class UIWrappedText extends UIComponent {
 
     setStyle(element, 'font-size', `${size}px`)
     setStyle(element, 'line-height', `${step}px`)
-
     setStyle(element, 'margin-top', `${(size - step) / 2}px`)
     setStyle(element, 'text-align', this.centred ? 'center' : '')
     setStyle(element, 'color', toCss(color))

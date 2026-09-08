@@ -115,7 +115,6 @@ export function animatedColor(
   source: State<Color>,
   options: AnimateOptions<Color> = {},
 ): State<Color> {
-
   return animated(source, lerpColor, { equals: sameColor, ...options, ...(touch ? { seconds: 0 } : {}) })
 }
 

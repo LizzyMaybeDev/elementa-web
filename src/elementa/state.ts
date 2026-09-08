@@ -10,7 +10,6 @@ export interface State<T> {
 export class BasicState<T> implements State<T> {
   private value: T
   private listeners = new Set<Listener<T>>()
-
   private readonly readers = new Set<Node_>()
 
   constructor(value: T) {

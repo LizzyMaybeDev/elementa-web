@@ -1,3 +1,4 @@
+
 import { UIComponent } from './component'
 import { type Color, toCss } from './color'
 import { ConstantColorConstraint } from './constraints'
@@ -6,14 +7,11 @@ import { setStyle } from './style'
 
 interface Drawn {
   rows: string[]
-
   drop?: number
-
   ink?: string
 }
 
 export const MARKS = {
-
   coin: {
     ink: 'blue',
     rows: [
@@ -24,7 +22,6 @@ export const MARKS = {
       '..x..',
     ],
   },
-
   star: {
     rows: [
       '...x...',
@@ -37,7 +34,6 @@ export const MARKS = {
     ],
     drop: 1,
   },
-
   key: {
     rows: [
       '.xxx..',
@@ -50,7 +46,6 @@ export const MARKS = {
     ],
     drop: 1,
   },
-
   note: {
     rows: [
       '...xxx',
@@ -63,7 +58,6 @@ export const MARKS = {
     ],
     drop: 1,
   },
-
   shirt: {
     rows: [
       'xx...xx',
@@ -76,7 +70,6 @@ export const MARKS = {
     ],
     drop: 1,
   },
-
   face: {
     rows: [
       'xxxxxxx',
@@ -89,7 +82,6 @@ export const MARKS = {
     ],
     drop: 1,
   },
-
   crown: {
     rows: [
       'x..x..x',
@@ -99,7 +91,6 @@ export const MARKS = {
       '.xxxxx.',
     ],
   },
-
   info: {
     rows: [
       '..xx...',
@@ -112,7 +103,18 @@ export const MARKS = {
     ],
     drop: 1,
   },
-
+  sparkle: {
+    rows: [
+      '.x....x...',
+      'xxx...x...',
+      '.x...xxx..',
+      '...xxxxxxx',
+      '.x...xxx..',
+      'xxx...x...',
+      '.x....x...',
+    ],
+    drop: 1,
+  },
   tick: {
     rows: [
       '....x',
@@ -122,7 +124,6 @@ export const MARKS = {
       '.x...',
     ],
   },
-
   clock: {
     rows: [
       '.xxx.',

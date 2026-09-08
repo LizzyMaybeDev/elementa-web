@@ -1,3 +1,4 @@
+
 import {
   UIBlock,
   UIContainer,
@@ -86,13 +87,11 @@ export function switchControl(palette: Palette, spec: Extract<Control, { kind: '
       height: minus(percent(1), pixels(2)),
     })
     .childOf(root)
-
   knob.effect(new TransitionEffect('left', 0.5, 'cubic-bezier(0.16, 1, 0.3, 1)'))
   knob.effect(new TransitionEffect('background-color', 0.25, 'ease-out'))
 
   root.onClick = () => {
     spec.onChange(!spec.value())
-
     invalidateLayout()
   }
   return root
@@ -112,7 +111,6 @@ export function dropdownControl(
     width: pixels(CONTROL_WIDTH),
     height: pixels(derived(() => 15 + (open.get() ? spec.options.length * ROW_HEIGHT + 2 : 0))),
   })
-
   root.sealed = true
 
   const lifted = new BasicState(false)
@@ -146,7 +144,6 @@ export function dropdownControl(
   const outside = (event: PointerEvent): void => {
     const inside = root.element?.contains(event.target as Node)
     if (inside) return
-
     fold.skip()
     clearTimeout(lowering)
     open.set(false)
@@ -203,7 +200,6 @@ function sliderControl(
   spec: Extract<Control, { kind: 'slider' }>,
   over: State<boolean>,
 ): UIComponent {
-
   const held = new BasicState(false)
   const wide = eased(() => (over.get() || held.get() ? SLIDER.open : SLIDER.shut), {
     seconds: 0.25,
@@ -295,7 +291,6 @@ function settingRow(palette: Palette, setting: Setting): UIComponent {
       height: plus(childBasedMaxSize(), pixels(INNER_PADDING)),
     })
     .childOf(root)
-
   box.effect(new LightEffect(palette.textHighlight))
   const over = hoverState(box)
   box.effect(new OutlineEffect(palette.componentBorder))

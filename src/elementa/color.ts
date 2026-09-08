@@ -52,6 +52,16 @@ export function lerp(from: Color, to: Color, t: number): Color {
   }
 }
 
+export function brighter(color: Color): Color {
+  const FACTOR = 0.7
+  const LEAST = 3
+  const { r, g, b } = color
+  if (r === 0 && g === 0 && b === 0) return rgba(LEAST, LEAST, LEAST, color.a)
+  const up = (value: number): number =>
+    Math.min(255, Math.round((value > 0 && value < LEAST ? LEAST : value) / FACTOR))
+  return rgba(up(r), up(g), up(b), color.a)
+}
+
 export const TRANSPARENT: Color = rgba(0, 0, 0, 0)
 
 export const sameColor = (a: Color, b: Color): boolean =>

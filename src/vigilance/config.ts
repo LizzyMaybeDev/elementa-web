@@ -182,9 +182,8 @@ export function appConfig(deps: ConfigDeps): SettingsConfig {
             ? []
             : [
                 {
-                  name: 'Turn off the light!',
-                  description:
-                    'The glow that follows the pointer across buttons and cards. It measures where every lit thing on the screen is, on every frame the pointer moves, so this is the one setting here that buys back real work.',
+                  name: 'Turn off the lights! {note}',
+                  description: 'The glow that follows the pointer across buttons and cards.',
                   control: {
                     kind: 'switch' as const,
                     value: () => settings.lightsOut,

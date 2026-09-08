@@ -3,6 +3,7 @@ import {
   UIContainer,
   UIText,
   UIWrappedText,
+  aspect,
   basic,
   center,
   childBasedMaxSize,
@@ -14,14 +15,23 @@ import {
   plus,
   sibling,
 } from '../elementa'
-import { BasicState, derived } from '../elementa/state'
+import { BasicState, derived, type State } from '../elementa/state'
 import { invalidateLayout } from '../elementa/frame'
 
-import { tint } from '../elementa/animation'
+import { Animations, eased, tint } from '../elementa/animation'
+import { brighter, type Color } from '../elementa/color'
 import type { UIComponent } from '../elementa/component'
-import { LAYERS, LayerEffect, OutlineEffect, ScissorEffect, TransitionEffect } from '../elementa/effects'
-import type { Palette } from '../theme/palette'
+import {
+  LAYERS,
+  LayerEffect,
+  LightEffect,
+  OutlineEffect,
+  ScissorEffect,
+  TransitionEffect,
+} from '../elementa/effects'
+import { type Palette, inkOf } from '../theme/palette'
 import { METRICS, panelShell, type ShellOptions } from './shell'
+import { UIRich } from '../elementa/rich'
 
 const { innerPadding: INNER_PADDING, rowGap: ROW_GAP, textColumnMax: TEXT_COLUMN_MAX } = METRICS
 const SWITCH = { width: METRICS.switchWidth, height: METRICS.switchHeight }
@@ -61,9 +71,14 @@ function anchored(component: UIComponent, width: number, height: number): UIComp
 
 export function switchControl(palette: Palette, spec: Extract<Control, { kind: 'switch' }>): UIComponent {
   const root = anchored(new UIBlock(), SWITCH.width, SWITCH.height)
-  root.setColor(tint(() => (spec.value() ? palette.textActive : palette.componentBorder).get()))
+  const over = hoverState(root)
 
-  new UIBlock(palette.componentBackground)
+  const lift = (slot: State<Color>): Color => (over.get() ? brighter(slot.get()) : slot.get())
+
+  root.setColor(derived(() => lift(spec.value() ? palette.primary : palette.text)))
+  root.effect(new TransitionEffect('background-color', 0.25, 'ease-out'))
+
+  const knob = new UIBlock(derived(() => lift(palette.componentBackground)))
     .constrain({
       x: pixels(derived(() => (spec.value() ? SWITCH.width - SWITCH.height + 1 : 1))),
       y: center(),
@@ -71,6 +86,9 @@ export function switchControl(palette: Palette, spec: Extract<Control, { kind: '
       height: minus(percent(1), pixels(2)),
     })
     .childOf(root)
+
+  knob.effect(new TransitionEffect('left', 0.5, 'cubic-bezier(0.16, 1, 0.3, 1)'))
+  knob.effect(new TransitionEffect('background-color', 0.25, 'ease-out'))
 
   root.onClick = () => {
     spec.onChange(!spec.value())
@@ -178,32 +196,60 @@ export function dropdownControl(
   return root
 }
 
-function sliderControl(palette: Palette, spec: Extract<Control, { kind: 'slider' }>): UIComponent {
-  const KNOB = 6
-  const root = anchored(new UIContainer(), CONTROL_WIDTH, 11)
+const SLIDER = { shut: 60, open: 85, height: 12 }
 
-  new UIBlock(palette.componentBackground)
-    .constrain({ y: center(), width: percent(1), height: pixels(3) })
-    .childOf(root)
+function sliderControl(
+  palette: Palette,
+  spec: Extract<Control, { kind: 'slider' }>,
+  over: State<boolean>,
+): UIComponent {
 
-  new UIBlock(palette.textActive)
-    .constrain({ y: center(), width: percent(derived(spec.value)), height: pixels(3) })
-    .childOf(root)
+  const held = new BasicState(false)
+  const wide = eased(() => (over.get() || held.get() ? SLIDER.open : SLIDER.shut), {
+    seconds: 0.25,
+    easing: Animations.OUT_EXP,
+  })
 
-  new UIBlock(palette.text)
+  const root = new UIContainer().constrain({
+    x: pixels(INNER_PADDING, true),
+    y: center(),
+    width: pixels(wide),
+    height: pixels(SLIDER.height),
+  })
+
+  const inset = SLIDER.height * 0.75
+  const trough = new UIContainer()
     .constrain({
-      x: pixels(derived(() => spec.value() * (CONTROL_WIDTH - KNOB))),
+      x: pixels(1 + inset),
       y: center(),
-      width: pixels(KNOB),
+      width: minus(percent(1), pixels(2 + SLIDER.height * 1.5)),
+      height: percent(0.5),
+    })
+    .childOf(root)
+  trough.effect(new OutlineEffect(palette.componentBorder))
+
+  const lit = tint(() => (over.get() ? brighter(palette.primary.get()) : palette.primary.get()))
+  const filled = new UIBlock(lit)
+    .constrain({ width: percent(derived(spec.value)), height: percent(1) })
+    .childOf(trough)
+
+  const grab = new UIBlock(lit)
+    .constrain({
+      x: basic(() => filled.getRight() - SLIDER.height / 2),
+      y: center(),
+      width: aspect(1),
       height: percent(1),
     })
     .childOf(root)
+  grab.effect(new OutlineEffect(palette.textHighlight))
 
-  root.onDrag = ({ x, width }) => {
-    const travel = Math.max(1, width - KNOB)
-    spec.onChange(Math.max(0, Math.min(1, (x - KNOB / 2) / travel)))
+  root.onDrag = ({ x }) => {
+    held.set(true)
+    const along = trough.getLeft() - root.getLeft()
+    spec.onChange(Math.max(0, Math.min(1, (x - along) / Math.max(1, trough.getWidth()))))
     invalidateLayout()
   }
+  root.onDragEnd = () => held.set(false)
   return root
 }
 
@@ -221,14 +267,14 @@ function buttonControl(palette: Palette, spec: Extract<Control, { kind: 'button'
   return root
 }
 
-function control(palette: Palette, spec: Control): UIComponent {
+function control(palette: Palette, spec: Control, over: State<boolean>): UIComponent {
   switch (spec.kind) {
     case 'switch':
       return switchControl(palette, spec)
     case 'dropdown':
       return dropdownControl(palette, spec)
     case 'slider':
-      return sliderControl(palette, spec)
+      return sliderControl(palette, spec, over)
     case 'button':
       return buttonControl(palette, spec)
   }
@@ -249,6 +295,9 @@ function settingRow(palette: Palette, setting: Setting): UIComponent {
       height: plus(childBasedMaxSize(), pixels(INNER_PADDING)),
     })
     .childOf(root)
+
+  box.effect(new LightEffect(palette.textHighlight))
+  const over = hoverState(box)
   box.effect(new OutlineEffect(palette.componentBorder))
 
   const text = new UIContainer()
@@ -268,7 +317,7 @@ function settingRow(palette: Palette, setting: Setting): UIComponent {
     })
     .childOf(box)
 
-  new UIText(setting.name, { color: palette.textHighlight })
+  new UIRich(inkOf(palette)(setting.name), { colour: palette.textHighlight })
     .constrain({ y: sibling(0) })
     .childOf(text)
 
@@ -276,9 +325,15 @@ function settingRow(palette: Palette, setting: Setting): UIComponent {
     .constrain({ y: sibling(3), width: percent(1) })
     .childOf(text)
 
-  control(palette, setting.control).childOf(box)
+  control(palette, setting.control, over).childOf(box)
   return root
 }
+
+const searchable = (setting: { name: string; description: string }): string =>
+  `${setting.name} ${setting.description}`
+    .replace(/\{[^:{}]*:([^{}]*)\}/g, '$1')
+    .replace(/\{[^{}]*\}/g, '')
+    .toLowerCase()
 
 export function settingsScreen(
   root: UIComponent,
@@ -303,7 +358,7 @@ export function settingsScreen(
       : config.categories[selected.get()].settings
 
     for (const setting of source) {
-      if (query && !`${setting.name} ${setting.description}`.toLowerCase().includes(query)) continue
+      if (query && !searchable(setting).includes(query)) continue
       settingRow(palette, setting).childOf(rows)
     }
   }

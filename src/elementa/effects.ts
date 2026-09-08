@@ -384,6 +384,11 @@ export function bloom(element: HTMLElement | null, event: MouseEvent, colour: st
 const starting = new WeakMap<HTMLElement, ReturnType<typeof setTimeout>>()
 
 const arrive = (element: HTMLElement, order: number, fromBelow = false, slide = true): void => {
+
+  if (!motion) {
+    element.classList.remove('waiting')
+    return
+  }
   const begin = (): void => {
     starting.delete(element)
     if (!element.isConnected || !element.classList.contains('waiting')) return
@@ -491,8 +496,9 @@ export class RiseEffect extends Effect {
   override apply(element: HTMLElement): void {
     if (this.armed) return
     this.armed = true
-    if (this.quiet || !motion) return
+    if (this.quiet) return
     style()
+
     arrive(element, this.order, false, this.slide)
   }
 }
@@ -521,12 +527,16 @@ function observerFor(element: HTMLElement): IntersectionObserver | null {
           arrivals.delete(root)
           return
         }
-        if (!motion) return
         const coming: IntersectionObserverEntry[] = []
         let above = false
         for (const entry of entries) {
           const target = entry.target as HTMLElement
           if (!target.isConnected) continue
+
+          if (!motion) {
+            target.classList.remove('waiting')
+            continue
+          }
           if (!entry.isIntersecting) {
             wait(target)
             continue
@@ -672,7 +682,7 @@ export class TransitionEffect extends Effect {
   }
 
   constructor(
-    private readonly property: 'height' | 'width' | 'top' | 'left' | 'opacity',
+    private readonly property: 'height' | 'width' | 'top' | 'left' | 'opacity' | 'background-color',
     private readonly seconds: number,
     private readonly easing = 'cubic-bezier(0.22, 1, 0.36, 1)',
   ) {

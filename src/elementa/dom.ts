@@ -1,6 +1,6 @@
 import { UIComponent, Window } from './component'
 import { setScaleFactor } from './constraints'
-import { measureScrollers, passDone, rehome, scrollMetrics, shine } from './effects'
+import { leaving, measureScrollers, moving, passDone, rehome, scrollMetrics, shine } from './effects'
 import { building, invalidateScroll, islands, passOwed, rousedNow, setReading } from './frame'
 import { setStyle } from './style'
 import { touch } from './device'
@@ -14,6 +14,14 @@ interface Clip {
 
 const MARGIN = 200
 const AHEAD = 900
+
+const stirring = (component: UIComponent): boolean => {
+  for (const node of component.walk()) {
+    const element = node.element
+    if (element && (moving(element) || leaving(element))) return true
+  }
+  return false
+}
 const BUDGET = 8
 
 export interface RendererOptions {
@@ -292,7 +300,7 @@ export class DomRenderer {
     for (const existing of Array.from(element.children)) {
       const child = existing as HTMLElement
       if (!this.managed.has(child) || wanted.has(child)) continue
-      if (child.classList.contains('fading') || child.classList.contains('leaving') || child.classList.contains('going')) continue
+      if (child.classList.contains('going')) continue
       element.removeChild(child)
     }
   }
@@ -440,10 +448,12 @@ export class DomRenderer {
 
     const out = this.outside(component, clip)
     const fresh = component.culled && !out
+    const wasIn = !component.culled && !made
     component.culled = out
     if (out) {
       component.culledBelow = false
-      if (!component.released && this.outside(component, clip, AHEAD)) {
+      if (wasIn) for (const child of component.children) this.position(child, component, clip, scrolling)
+      if (!component.released && this.outside(component, clip, AHEAD) && !stirring(component)) {
         component.released = true
         for (const node of component.walk()) node.release()
       }

@@ -16,3 +16,5 @@ export function setStyle(element: HTMLElement, property: string, value: string):
 export function setStyles(element: HTMLElement, styles: Record<string, string>): void {
   for (const [property, value] of Object.entries(styles)) setStyle(element, property, value)
 }
+
+export const writtenStyle = (element: HTMLElement, property: string): string | undefined => written.get(element)?.get(property)

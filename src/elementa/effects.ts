@@ -4,6 +4,30 @@ import { type Color, shadowOf, toCss, withAlpha } from './color'
 import { type State, toState } from './state'
 import { setStyle } from './style'
 import { touch } from './device'
+import {
+  type Step,
+  ARRIVE_MS,
+  alongPath,
+  arrive as bring,
+  arrivesAfter,
+  gridPath,
+  hidden,
+  hide,
+  leave as fadeOut,
+  leaving,
+  motionOf,
+  moveFrom,
+  moving,
+  quietly as movesQuietly,
+  reword,
+  setMotion as setMoving,
+  slipAway,
+  slipped,
+  standing,
+  unleave,
+} from './motion'
+
+export { type Step, ARRIVE_MS, alongPath, arrivesAfter, bring as arrive, gridPath, leaving, moving, reword, standing, unleave }
 
 export abstract class Effect {
   abstract apply(element: HTMLElement, component: UIComponent, scale: number): void
@@ -89,38 +113,23 @@ const REACH = 150
 
 const RECOLOUR = 0.4
 
-const ARRIVE_SECONDS = 0.85
-const ARRIVE_FROM = 14
 const LEAVE_SECONDS = 0.3
 const SLIDE_SECONDS = 0.5
 
-const STAGGER = 60
-const BARELY = 200
-const EDGE_SLACK = 48
-const STAGGER_MAX = 10
-
 export const AFTER_BOX = 5
-
-export const arrivesAfter = (order: number): number =>
-  motion ? order * STAGGER + ARRIVE_SECONDS * 1000 : 0
 
 let quiet = false
 
 let motion = true
 export const setMotion = (on: boolean): void => {
   motion = on
-  if (on || typeof document === 'undefined') return
-  for (const element of document.querySelectorAll('.waiting, .arrived, .gliding')) {
-    element.classList.remove('waiting', 'arrived', 'from-below', 'still', 'aside')
-    ;(element as HTMLElement).style.transform = ''
-    settle(element as HTMLElement)
-  }
+  setMoving(on)
 }
 
 export function quietly(build: () => void): void {
   quiet = true
   try {
-    build()
+    movesQuietly(build)
   } finally {
     quiet = false
   }
@@ -133,10 +142,6 @@ function style(): void {
   styled = true
   const sheet = document.createElement('style')
   sheet.textContent = `
-    @keyframes arrive { from { opacity: 0; transform: translateY(-${ARRIVE_FROM}px) } }
-    @keyframes arrive-up { from { opacity: 0; transform: translateY(${ARRIVE_FROM}px) } }
-    @keyframes appear { from { opacity: 0 } }
-    @keyframes fade { to { opacity: 0 } }
     
     .recolouring, .recolouring * {
       transition:
@@ -145,20 +150,9 @@ function style(): void {
         outline-color ${RECOLOUR}s ease,
         text-shadow ${RECOLOUR}s ease !important;
     }
-    .waiting { opacity: 0 }
-    .arrived { animation: arrive ${ARRIVE_SECONDS}s cubic-bezier(0.22, 1, 0.36, 1) both }
-    .arrived.from-below { animation-name: arrive-up }
-    .arrived.still { animation-name: appear }
-    
-    .arrived.aside { animation-name: enter-side }
-    .leaving { animation: arrive ${LEAVE_SECONDS}s ease-in reverse both !important; animation-delay: 0ms !important }
-    .fading { animation: fade ${LEAVE_SECONDS}s ease-in both !important; animation-delay: 0ms !important }
-    .going { animation: fade ${SLIDE_SECONDS}s ease-out both !important; animation-delay: 0ms !important }
-    @keyframes reword { from { opacity: 0; transform: translateX(14px) } }
-    .reword { animation: reword 0.45s cubic-bezier(0.22, 1, 0.36, 1) both }
     @keyframes enter-side { from { opacity: 0; transform: translateX(28px) } }
     @keyframes drain { from { width: 100% } to { width: 0% } }
-    .enters { animation: enter-side ${ARRIVE_SECONDS}s cubic-bezier(0.22, 1, 0.36, 1) both }
+    .enters { animation: enter-side 0.85s cubic-bezier(0.22, 1, 0.36, 1) both }
     .exits { animation: enter-side ${LEAVE_SECONDS}s ease-in reverse both !important }
     .draining { animation: drain linear both }
     
@@ -410,33 +404,6 @@ export function bloom(element: HTMLElement | null, event: MouseEvent, colour: st
   blob.addEventListener('animationend', () => blob.remove(), { once: true })
 }
 
-const starting = new WeakMap<HTMLElement, ReturnType<typeof setTimeout>>()
-
-const arrive = (element: HTMLElement, order: number, fromBelow = false, slide = true): void => {
-  if (!motion) {
-    element.classList.remove('waiting')
-    return
-  }
-  const begin = (): void => {
-    starting.delete(element)
-    if (!element.isConnected || !element.classList.contains('waiting')) return
-    setStyle(element, 'animation-delay', '0ms')
-    element.dataset.since = `${performance.now()}`
-    const aside = 'aside' in element.dataset
-    delete element.dataset.aside
-    element.classList.remove('waiting')
-    element.classList.toggle('aside', aside)
-    element.classList.toggle('from-below', !aside && fromBelow)
-    element.classList.toggle('still', !aside && !slide)
-    element.classList.add('arrived')
-    ended(element, () => element.classList.remove('arrived'))
-  }
-  clearTimeout(starting.get(element))
-  element.classList.add('waiting')
-  if (order === 0) begin()
-  else starting.set(element, setTimeout(begin, order * STAGGER))
-}
-
 const ended = (element: HTMLElement, then: () => void): void => {
   const listener = (event: AnimationEvent): void => {
     if (event.target !== element) return
@@ -456,6 +423,8 @@ if (import.meta.env.DEV && typeof globalThis !== 'undefined') {
     op: string
     cls: string
     anims: number
+    ct: number
+    it: string
   }
   const self = globalThis as {
     __watch?: (needle: string, frames?: number) => void
@@ -498,6 +467,8 @@ if (import.meta.env.DEV && typeof globalThis !== 'undefined') {
           op: style.opacity,
           cls: shell.className,
           anims: shell.getAnimations().length,
+          ct: Math.round(Number(shell.getAnimations()[0]?.currentTime ?? -1)),
+          it: shell.style.top,
         }
         track.rows.push(row)
         self.__frames?.push({ who: track.who, ...row })
@@ -505,6 +476,19 @@ if (import.meta.env.DEV && typeof globalThis !== 'undefined') {
       if (--frames > 0) requestAnimationFrame(step)
     }
     requestAnimationFrame(step)
+  }
+  ;(self as { __jumps?: (px?: number) => unknown[] }).__jumps = (px = 45): unknown[] => {
+    const out: unknown[] = []
+    for (const [, track] of tracks) {
+      const rows = track.rows.filter((row) => row.op !== '0')
+      for (let i = 1; i < rows.length; i++) {
+        const a = rows[i - 1]
+        const b = rows[i]
+        if (b.t - a.t > 60 || Math.abs(b.top - a.top) <= px) continue
+        out.push({ who: track.who, t: b.t, from: a.top, to: b.top, tr: [a.tr, b.tr], op: [a.op, b.op], cls: [a.cls, b.cls], before: rows.slice(Math.max(0, i - 3), i).map((r) => r.t + ':' + r.top), after: rows.slice(i, i + 4).map((r) => r.t + ':' + r.top) })
+      }
+    }
+    return out
   }
   self.__springs = (rise = 60, back = 40, within = 400): unknown[] => {
     const out: unknown[] = []
@@ -533,6 +517,28 @@ if (import.meta.env.DEV && typeof globalThis !== 'undefined') {
   }
 }
 
+if (import.meta.env.DEV && typeof globalThis !== 'undefined' && typeof document !== 'undefined') {
+  const self = globalThis as { __keys?: unknown[]; __rhythm?: () => string }
+  const keys: { t: number; key: string; value: string }[] = []
+  let first = 0
+  self.__keys = keys
+  document.addEventListener(
+    'keydown',
+    (event) => {
+      const at = performance.now()
+      if (keys.length === 0) first = at
+      const target = event.target as { value?: string } | null
+      keys.push({ t: Math.round(at - first), key: event.key, value: target?.value ?? '' })
+    },
+    true,
+  )
+  self.__rhythm = (): string => {
+    const text = JSON.stringify(keys)
+    void navigator.clipboard?.writeText(text)
+    return text
+  }
+}
+
 export const note = (what: string, more: Record<string, unknown> = {}): void => {
   if (!import.meta.env.DEV) return
   const held = ((globalThis as { __trace?: unknown[] }).__trace ??= [])
@@ -540,260 +546,18 @@ export const note = (what: string, more: Record<string, unknown> = {}): void => 
   if (held.length > 200) held.shift()
 }
 
-const trace = (what: string, element: HTMLElement, more: Record<string, unknown> = {}): void => {
-  if (!import.meta.env.DEV) return
-  const held = ((globalThis as { __trace?: unknown[] }).__trace ??= [])
-  held.push({
-    at: Math.round(performance.now()),
-    what,
-    who: element.dataset.component ?? element.tagName,
-    text: element.textContent?.slice(0, 24),
-    top: Math.round(element.getBoundingClientRect().top),
-    ...more,
-  })
-  if (held.length > 200) held.shift()
-}
-
-const wait = (element: HTMLElement): void => {
-  trace('wait', element, { stack: (new Error().stack ?? '').split(String.fromCharCode(10))[2]?.trim() })
-  clearTimeout(starting.get(element))
-  starting.delete(element)
-  settle(element)
-  element.classList.remove('arrived', 'from-below', 'aside')
-  element.classList.add('waiting')
-}
-
-const going = new WeakMap<HTMLElement, object>()
-
-export function leave(
-  element: HTMLElement | null,
-  slide: boolean,
-  then: () => void,
-  gently = false,
-): void {
-  if (!element || !element.isConnected || !motion) {
-    then()
-    return
-  }
-  style()
-  const token = {}
-  going.set(element, token)
-  let done = false
-  const once = (): void => {
-    if (done) return
-    done = true
-    if (going.get(element) !== token) return
-    going.delete(element)
-    element.classList.remove('leaving', 'fading', 'going')
-    then()
-  }
-  ended(element, once)
-  setTimeout(once, (gently ? SLIDE_SECONDS : LEAVE_SECONDS) * 1000 + 100)
-  element.classList.add(slide ? 'leaving' : gently ? 'going' : 'fading')
-}
-
-export function unleave(element: HTMLElement | null): void {
-  if (!element) return
-  going.delete(element)
-  element.classList.remove('leaving', 'fading', 'going')
-}
-
-export function reword(element: HTMLElement | null): void {
-  if (!element || !motion) return
-  style()
-  element.classList.remove('reword')
-  void element.offsetWidth
-  element.classList.add('reword')
-  ended(element, () => element.classList.remove('reword'))
+export function leave(element: HTMLElement | null, _slide: boolean, then: () => void, _gently = false): void {
+  fadeOut(element, then)
 }
 
 export function rearrive(element: HTMLElement | null, aside = false): void {
   if (!element) return
-  element.dataset.rearrive = ''
-  if (aside) element.dataset.aside = ''
+  element.dataset.rearrive = aside ? 'aside' : 'above'
 }
 
 const rehomed = new WeakSet<HTMLElement>()
 export const rehome = (element: HTMLElement): void => {
   rehomed.add(element)
-}
-
-export interface Step {
-  x: number
-  y: number
-  at: number
-}
-
-const CORNER = 0.5
-const CORNER_MAX = 28
-const ARC_STEPS = 8
-
-export function gridPath(dx: number, dy: number): Step[] {
-  const ax = Math.abs(dx)
-  const ay = Math.abs(dy)
-  const r = Math.min(CORNER_MAX, CORNER * Math.min(ax, ay))
-  if (r === 0) return [{ x: dx, y: dy, at: 0 }, { x: 0, y: 0, at: 1 }]
-  const sx = Math.sign(dx)
-  const sy = Math.sign(dy)
-  const down = ay - r
-  const arc = (Math.PI / 2) * r
-  const across = ax - r
-  const length = down + arc + across
-  const cx = dx - sx * r
-  const cy = sy * r
-  const steps: Step[] = [{ x: dx, y: dy, at: 0 }]
-  for (let k = 0; k <= ARC_STEPS; k++) {
-    const angle = ((Math.PI / 2) * k) / ARC_STEPS
-    steps.push({
-      x: cx + sx * r * Math.cos(angle),
-      y: cy - sy * r * Math.sin(angle),
-      at: (down + r * angle) / length,
-    })
-  }
-  steps.push({ x: 0, y: 0, at: 1 })
-  return steps
-}
-
-export function alongPath(steps: Step[], share: number): { x: number; y: number } {
-  if (share <= 0) return { x: steps[0].x, y: steps[0].y }
-  for (let i = 1; i < steps.length; i++) {
-    const to = steps[i]
-    if (share > to.at) continue
-    const from = steps[i - 1]
-    const span = to.at - from.at
-    const t = span > 0 ? (share - from.at) / span : 1
-    return { x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t }
-  }
-  return { x: 0, y: 0 }
-}
-
-const GLIDE_EASE = 'cubic-bezier(0.4, 0, 0.2, 1)'
-export const glideEase = cubicBezier(0.4, 0, 0.2, 1)
-const eased = glideEase
-
-function cubicBezier(x1: number, y1: number, x2: number, y2: number): (x: number) => number {
-  const sample = (a: number, b: number, t: number): number =>
-    ((1 - t) ** 3) * 0 + 3 * (1 - t) ** 2 * t * a + 3 * (1 - t) * t * t * b + t ** 3
-  return (x: number): number => {
-    if (x <= 0) return 0
-    if (x >= 1) return 1
-    let lo = 0
-    let hi = 1
-    let t = x
-    for (let i = 0; i < 24; i++) {
-      const at = sample(x1, x2, t)
-      if (Math.abs(at - x) < 1e-5) break
-      if (at < x) lo = t
-      else hi = t
-      t = (lo + hi) / 2
-    }
-    return sample(y1, y2, t)
-  }
-}
-
-interface Glide {
-  steps: Step[]
-  since: number
-  animation: Animation | null
-  fallback: ReturnType<typeof setTimeout> | null
-  turning: boolean
-}
-
-const progressOf = (glide: Glide): number => {
-  const animation = glide.animation
-  const elapsed =
-    animation && animation.currentTime !== null
-      ? Number(animation.currentTime)
-      : animation
-        ? 0
-        : performance.now() - glide.since
-  return Math.max(0, Math.min(1, elapsed / (SLIDE_SECONDS * 1000)))
-}
-
-const velocityOf = (glide: Glide): { x: number; y: number } => {
-  const t = progressOf(glide)
-  const step = 0.01
-  if (t >= 1) return { x: 0, y: 0 }
-  const shareOf = (at: number): number => (glide.turning ? at : eased(at))
-  const here = alongPath(glide.steps, shareOf(t))
-  const ahead = alongPath(glide.steps, shareOf(Math.min(1, t + step)))
-  const ms = step * SLIDE_SECONDS * 1000
-  return { x: (ahead.x - here.x) / ms, y: (ahead.y - here.y) / ms }
-}
-
-const PULL = 0.014
-
-export function turningPath(
-  from: { x: number; y: number },
-  velocity: { x: number; y: number },
-  ms: number,
-): Step[] {
-  const count = 24
-  const at = (t: number, x0: number, v0: number): number =>
-    (x0 + (v0 + PULL * x0) * t) * Math.exp(-PULL * t)
-  const leftX = at(ms, from.x, velocity.x)
-  const leftY = at(ms, from.y, velocity.y)
-  const steps: Step[] = []
-  for (let i = 0; i <= count; i++) {
-    const share = i / count
-    const t = share * ms
-    steps.push({
-      x: at(t, from.x, velocity.x) - share * leftX,
-      y: at(t, from.y, velocity.y) - share * leftY,
-      at: share,
-    })
-  }
-  return steps
-}
-
-const glides = new WeakMap<HTMLElement, Glide>()
-
-export const glideOf = (element: HTMLElement): Step[] | null => glides.get(element)?.steps ?? null
-
-const standingAt = (glide: Glide): { x: number; y: number } =>
-  alongPath(glide.steps, glide.turning ? progressOf(glide) : eased(progressOf(glide)))
-
-const settle = (element: HTMLElement): void => {
-  const glide = glides.get(element)
-  if (!glide) return
-  glide.animation?.cancel()
-  if (glide.fallback) clearTimeout(glide.fallback)
-  glides.delete(element)
-  element.classList.remove('gliding')
-}
-
-const slide = (element: HTMLElement, dx: number, dy: number): void => {
-  if (!motion) return
-  style()
-  const held = glides.get(element)
-  const ms = SLIDE_SECONDS * 1000
-  let steps: Step[]
-  if (held) {
-    const now = standingAt(held)
-    steps = turningPath({ x: dx + now.x, y: dy + now.y }, velocityOf(held), ms)
-  } else steps = gridPath(dx, dy)
-  const glide: Glide = {
-    steps,
-    since: performance.now(),
-    animation: null,
-    fallback: null,
-    turning: held !== undefined,
-  }
-  const done = (): void => {
-    if (glides.get(element) === glide) settle(element)
-  }
-  if (typeof element.animate === 'function') {
-    glide.animation = element.animate(
-      steps.map((step) => ({ translate: `${step.x}px ${step.y}px`, offset: step.at })),
-      { duration: ms, easing: glide.turning ? 'linear' : GLIDE_EASE, fill: 'both' },
-    )
-    glide.animation.onfinish = done
-  } else {
-    glide.fallback = setTimeout(done, SLIDE_SECONDS * 1000)
-  }
-  if (held) settle(element)
-  glides.set(element, glide)
-  element.classList.add('gliding')
 }
 
 export class RiseEffect extends Effect {
@@ -811,10 +575,12 @@ export class RiseEffect extends Effect {
     if (this.armed) return
     this.armed = true
     if (this.quiet) return
-    style()
-    arrive(element, this.order, false, this.slide)
+    bring(element, this.slide ? 'above' : 'still', this.order)
   }
 }
+
+const EDGE_SLACK = 48
+const STAGGER_MAX = 10
 
 const arrivals = new Map<Element | null, IntersectionObserver>()
 const watchedBy = new WeakMap<HTMLElement, IntersectionObserver>()
@@ -841,22 +607,7 @@ function observerFor(element: HTMLElement): IntersectionObserver | null {
         let above = false
         for (const entry of entries) {
           const target = entry.target as HTMLElement
-          if (!target.isConnected) continue
-          if (!motion) {
-            target.classList.remove('waiting')
-            continue
-          }
-          if (!entry.isIntersecting) {
-            if (glides.has(target)) continue
-            trace('observer', target, {
-              rect: Math.round(entry.boundingClientRect.top),
-              root: Math.round(entry.rootBounds?.top ?? -1),
-              rootBottom: Math.round(entry.rootBounds?.bottom ?? -1),
-            })
-            wait(target)
-            continue
-          }
-          if (!target.classList.contains('waiting')) continue
+          if (!target.isConnected || !entry.isIntersecting || !hidden(target)) continue
           coming.push(entry)
           if (entry.boundingClientRect.top < (entry.rootBounds?.top ?? 0)) above = true
         }
@@ -867,7 +618,10 @@ function observerFor(element: HTMLElement): IntersectionObserver | null {
         )
         if (above) coming.reverse()
         coming.forEach((entry, order) => {
-          arrive(entry.target as HTMLElement, Math.min(order, STAGGER_MAX), above)
+          const target = entry.target as HTMLElement
+          held?.unobserve(target)
+          watchedBy.delete(target)
+          bring(target, above ? 'below' : 'above', Math.min(order, STAGGER_MAX))
         })
       },
       { root, rootMargin: `${EDGE_SLACK}px 0px` },
@@ -877,7 +631,7 @@ function observerFor(element: HTMLElement): IntersectionObserver | null {
   return held
 }
 
-const rewatch = (element: HTMLElement): void => {
+const watch = (element: HTMLElement): void => {
   const watching = observerFor(element)
   if (!watching || watchedBy.get(element) === watching) return
   watchedBy.get(element)?.unobserve(element)
@@ -902,29 +656,19 @@ export class FadeInEffect extends Effect {
 
     if (!this.armed) {
       this.armed = true
-      style()
-      if (!this.quiet && motion) element.classList.add('waiting')
-      const watching = observerFor(element)
-      watching?.observe(element)
-      if (watching) watchedBy.set(element, watching)
-    } else if ('rearrive' in element.dataset) {
       delete element.dataset.rearrive
-      const watching = observerFor(element)
-      watchedBy.get(element)?.unobserve(element)
-      if (motion) wait(element)
-      watching?.observe(element)
-      if (watching) watchedBy.set(element, watching)
-    } else if (rehomed.has(element) && element.classList.contains('waiting')) {
-      rehomed.delete(element)
-      rewatch(element)
-    } else {
-      if (rehomed.delete(element) && !element.classList.contains('waiting')) {
-        rewatch(element)
-        if (element.classList.contains('arrived')) {
-          const since = Number(element.dataset.since)
-          setStyle(element, 'animation-delay', `${since - performance.now()}ms`)
-        }
+      if (!this.quiet && motion) {
+        hide(element)
+        watch(element)
       }
+    } else if (element.dataset.rearrive) {
+      const way = element.dataset.rearrive === 'aside' ? 'aside' : 'above'
+      delete element.dataset.rearrive
+      rehomed.delete(element)
+      if (!hidden(element) || slipped(element)) bring(element, way)
+      else watch(element)
+    } else {
+      if (rehomed.delete(element) && hidden(element)) watch(element)
       this.moved(element, component, scale, x, y, width, height)
     }
 
@@ -946,15 +690,11 @@ export class FadeInEffect extends Effect {
   ): void {
     if (Number.isNaN(this.x)) return
     anchored(component)
-    if (x === this.x && y === this.y + shift) {
-      if (y !== this.y) trace('held', element, { fromY: this.y, toY: y, shift })
-      return
-    }
+    if (x === this.x && y === this.y + shift) return
     if (scale !== this.scale || width !== this.width || height !== this.height) return
-    if (element.classList.contains('waiting')) return
     if (touch) return
-    if (element.classList.contains('arrived') && performance.now() - Number(element.dataset.since) < BARELY) {
-      rearrive(element)
+    if (hidden(element)) {
+      if (slipped(element)) rearrive(element, true)
       return
     }
     if (!walk(element, component, scale, this.x, this.y, x, y, height)) rearrive(element, true)
@@ -974,15 +714,6 @@ export function holdStill(
   anchor = component
   shift = component ? by : 0
   sendTo = component && scroller && by !== 0 ? { scroller, at } : null
-  if (component?.element) {
-    trace('hold', component.element, {
-      by,
-      at,
-      scrollTop: scroller?.scrollTop,
-      scrollHeight: scroller?.scrollHeight,
-      client: scroller?.clientHeight,
-    })
-  }
 }
 
 function anchored(component: UIComponent): void {
@@ -994,17 +725,7 @@ export function passDone(): void {
   shift = 0
   const send = sendTo
   sendTo = null
-  if (send) {
-    const before = send.scroller.scrollTop
-    send.scroller.scrollTop = send.at
-    trace('scroll', send.scroller, {
-      wanted: send.at,
-      before,
-      after: send.scroller.scrollTop,
-      scrollHeight: send.scroller.scrollHeight,
-      client: send.scroller.clientHeight,
-    })
-  }
+  if (send) send.scroller.scrollTop = send.at
 }
 
 function walk(
@@ -1020,13 +741,15 @@ function walk(
   const seen = viewOf(component, scale)
   const inView = (at: number, moved = 0): boolean =>
     !seen || (at + height > seen.top + moved - height && at < seen.bottom + moved + height)
-  const held = glides.get(element)
-  const stoodY = fromY + (held ? standingAt(held).y : 0)
-  if (!inView(stoodY, -shift) || !inView(toY)) {
-    trace('far', element, { fromY, stoodY, toY, shift, seen })
-    return false
+  const layout = { from: { x: fromX, y: fromY }, to: { x: toX, y: toY } }
+  const wasSeen = inView(fromY + standing(element).y, -shift)
+  if (wasSeen && !inView(toY)) {
+    slipAway(element, fromX - toX, fromY + shift - toY, layout)
+    motionOf(element)!.then = () => watch(element)
+    return true
   }
-  slide(element, fromX - toX, fromY + shift - toY)
+  if (!wasSeen || !inView(toY)) return false
+  moveFrom(element, fromX - toX, fromY + shift - toY, layout)
   return true
 }
 
@@ -1050,7 +773,6 @@ export class MoveEffect extends Effect {
       height === this.height &&
       !touch
     ) {
-      style()
       walk(element, component, scale, this.x, this.y, x, y, height)
     }
     this.x = x

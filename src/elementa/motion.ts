@@ -19,7 +19,7 @@ const ARRIVE_TAU = 120
 const FADE_OUT = 95
 const STAGGER = 60
 
-const WAIT_FOR_MOVERS = 700
+const WAIT_FOR_MOVERS = 220
 
 const NEARLY = 40
 const ARRIVE_FROM = 14

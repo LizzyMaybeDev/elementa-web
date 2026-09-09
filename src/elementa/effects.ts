@@ -700,7 +700,7 @@ export class FadeInEffect extends Effect {
       if (slipped(element)) rearrive(element, true)
       return
     }
-    if (!walk(element, component, scale, this.x, this.y, x, y, height)) rearrive(element, true)
+    if (!walk(element, component, scale, this.x, this.y, x, y, width, height)) rearrive(element, true)
   }
 }
 
@@ -739,6 +739,7 @@ function walk(
   fromY: number,
   toX: number,
   toY: number,
+  width: number,
   height: number,
 ): boolean {
   const seen = viewOf(component, scale)
@@ -746,9 +747,10 @@ function walk(
     !seen || (at + height > seen.top + moved - height && at < seen.bottom + moved + height)
   const layout = { from: { x: fromX, y: fromY }, to: { x: toX, y: toY } }
   const wasSeen = inView(fromY + standing(element).y, -shift)
-  if (wasSeen && !inView(toY)) {
+  const wraps = Math.abs(fromY - toY) > height / 2 && Math.abs(fromX - toX) > width * 1.5
+  if (wasSeen && (!inView(toY) || wraps)) {
     slipAway(element, fromX - toX, fromY + shift - toY, layout)
-    motionOf(element)!.then = () => watch(element)
+    motionOf(element)!.then = inView(toY) ? () => bring(element, 'aside') : () => watch(element)
     return true
   }
   if (!wasSeen || !inView(toY)) return false
@@ -775,7 +777,7 @@ export class MoveEffect extends Effect {
       width === this.width &&
       height === this.height
     ) {
-      walk(element, component, scale, this.x, this.y, x, y, height)
+      walk(element, component, scale, this.x, this.y, x, y, width, height)
     }
     this.x = x
     this.y = y

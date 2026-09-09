@@ -1,5 +1,4 @@
 
-import { touch } from './device'
 import { writtenStyle } from './style'
 
 export interface Step {
@@ -15,6 +14,8 @@ const GATHER = 0.0075
 const HOME = 0.4
 
 const FADE_IN = 150
+
+const ARRIVE_TAU = 120
 const FADE_OUT = 95
 const STAGGER = 60
 
@@ -100,6 +101,7 @@ export interface Play extends Going {
   length: number
   toOpacity: number
   fades: boolean
+  easing: boolean
   run: Going[]
   played: Animation | null
   born: number
@@ -215,7 +217,7 @@ function tick(now: number): void {
   if (movers.size) frame = requestAnimationFrame(tick)
 }
 
-export function step(play: Going & { steps: Step[]; length: number; toOpacity: number }, dt: number): boolean {
+export function step(play: Going & { steps: Step[]; length: number; toOpacity: number; easing?: boolean }, dt: number): boolean {
   if (play.hold > 0) {
     play.hold -= dt
     return false
@@ -237,6 +239,12 @@ export function step(play: Going & { steps: Step[]; length: number; toOpacity: n
       play.y = play.steps[0].y
       play.turning = false
     }
+  } else if (play.easing && play.gone < play.length) {
+    play.gone += (play.length - play.gone) * (1 - Math.exp(-dt / ARRIVE_TAU))
+    if (play.length - play.gone < 0.2) play.gone = play.length
+    const at = alongPath(play.steps, play.length ? play.gone / play.length : 1)
+    play.x = at.x
+    play.y = at.y
   } else if (play.gone < play.length) {
     const left = play.length - play.gone
     const want = Math.min(FASTEST, Math.max(SLOWEST, left / EASE))
@@ -437,6 +445,7 @@ const newPlay = (): Play => ({
   hold: 0,
   turning: false,
   fades: false,
+  easing: false,
   run: [],
   played: null,
   born: 0,
@@ -490,11 +499,12 @@ const othersSettleIn = (element: HTMLElement): number => {
 }
 
 export function slipAway(element: HTMLElement, dx: number, dy: number, layout?: Layout): void {
-  if (!motion || touch) return
+  if (!motion) return
   const play = playOf(element)
   slippedAway.add(element)
   if (layout && composited()) keepPainted(element, layout)
   plan(element, play, (at) => {
+    at.easing = false
     at.x += dx
     at.y += dy
     for (const frame of at.run) {
@@ -516,11 +526,12 @@ export function slipAway(element: HTMLElement, dx: number, dy: number, layout?: 
 }
 
 export function moveFrom(element: HTMLElement, dx: number, dy: number, layout?: Layout): void {
-  if (!motion || touch) return
+  if (!motion) return
   const play = playOf(element)
   slippedAway.delete(element)
   if (layout && composited()) keepPainted(element, layout)
   plan(element, play, (at) => {
+    at.easing = false
     at.x += dx
     at.y += dy
     for (const frame of at.run) {
@@ -575,6 +586,7 @@ export function arrive(element: HTMLElement, way: Way = 'above', order = 0): voi
     at.opacity = seen
     at.toOpacity = 1
     at.turning = false
+    at.easing = true
     at.steps = [{ x: from.x, y: from.y, at: 0 }, { x: 0, y: 0, at: 1 }]
     at.length = Math.hypot(from.x, from.y)
     at.gone = 0

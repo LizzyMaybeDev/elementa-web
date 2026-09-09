@@ -584,6 +584,7 @@ const STAGGER_MAX = 10
 
 const arrivals = new Map<Element | null, IntersectionObserver>()
 const watchedBy = new WeakMap<HTMLElement, IntersectionObserver>()
+const scrolledTo = new Map<Element | null, number>()
 
 function observerFor(element: HTMLElement): IntersectionObserver | null {
   if (typeof IntersectionObserver === 'undefined') return null
@@ -604,12 +605,18 @@ function observerFor(element: HTMLElement): IntersectionObserver | null {
           return
         }
         const coming: IntersectionObserverEntry[] = []
-        let above = false
+        const at = root ? root.scrollTop : (globalThis.scrollY ?? 0)
+        const above = at < (scrolledTo.get(root) ?? at)
+        scrolledTo.set(root, at)
         for (const entry of entries) {
           const target = entry.target as HTMLElement
-          if (!target.isConnected || !entry.isIntersecting || !hidden(target)) continue
+          if (!target.isConnected) continue
+          if (!entry.isIntersecting) {
+            if (!hidden(target) && !moving(target) && !leaving(target)) hide(target)
+            continue
+          }
+          if (!hidden(target)) continue
           coming.push(entry)
-          if (entry.boundingClientRect.top < (entry.rootBounds?.top ?? 0)) above = true
         }
         coming.sort(
           (a, b) =>
@@ -618,10 +625,7 @@ function observerFor(element: HTMLElement): IntersectionObserver | null {
         )
         if (above) coming.reverse()
         coming.forEach((entry, order) => {
-          const target = entry.target as HTMLElement
-          held?.unobserve(target)
-          watchedBy.delete(target)
-          bring(target, above ? 'below' : 'above', Math.min(order, STAGGER_MAX))
+          bring(entry.target as HTMLElement, above ? 'below' : 'above', Math.min(order, STAGGER_MAX))
         })
       },
       { root, rootMargin: `${EDGE_SLACK}px 0px` },
@@ -692,7 +696,6 @@ export class FadeInEffect extends Effect {
     anchored(component)
     if (x === this.x && y === this.y + shift) return
     if (scale !== this.scale || width !== this.width || height !== this.height) return
-    if (touch) return
     if (hidden(element)) {
       if (slipped(element)) rearrive(element, true)
       return
@@ -770,8 +773,7 @@ export class MoveEffect extends Effect {
       (x !== this.x || y !== this.y + shift) &&
       scale === this.scale &&
       width === this.width &&
-      height === this.height &&
-      !touch
+      height === this.height
     ) {
       walk(element, component, scale, this.x, this.y, x, y, height)
     }

@@ -97,6 +97,7 @@ export interface ConfigDeps {
   renderer: DomRenderer
   fade: BasicState<number>
   onTheme?: (name: string, undo: () => void) => void
+  data?: { export: () => void; import: () => void }
 }
 
 export function appConfig(deps: ConfigDeps): SettingsConfig {
@@ -202,6 +203,26 @@ export function appConfig(deps: ConfigDeps): SettingsConfig {
           },
         ],
       },
+      ...(deps.data
+        ? [
+            {
+              name: 'Your data',
+              settings: [
+                {
+                  name: 'Export my data',
+                  description:
+                    'Everything this browser holds for you, as one .ape file: your skins and the one you wear, your settings, and every popup and tour you have already seen. Spoken in monkey, a format of our own.',
+                  control: { kind: 'button' as const, label: 'Export', onPress: deps.data.export },
+                },
+                {
+                  name: 'Import',
+                  description: 'Brings an .ape file back in, over whatever is here, and starts the page again with it.',
+                  control: { kind: 'button' as const, label: 'Import', onPress: deps.data.import },
+                },
+              ],
+            },
+          ]
+        : []),
     ],
   }
 }

@@ -180,4 +180,3 @@ export function question(
 
   return scrim
 }
-

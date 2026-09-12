@@ -21,7 +21,7 @@ import type { UIComponent } from '../elementa/component'
 import type { Constraint } from '../elementa/constraints'
 import type { BasicState, State } from '../elementa/state'
 import { tint } from '../elementa/animation'
-import { type Color, lerp, toCss, withAlpha } from '../elementa/color'
+import { type Color, toCss, withAlpha } from '../elementa/color'
 import { ConstantColorConstraint } from '../elementa/constraints'
 import {
   bloom,
@@ -37,6 +37,8 @@ import {
   ShowEffect,
   TransitionEffect,
   TurnEffect,
+  WheelEffect,
+  OwnLayerEffect,
   scrollMetrics,
 } from '../elementa/effects'
 import { UITextInput, onUnfocusedType } from '../elementa/input'
@@ -64,6 +66,10 @@ export const PANEL_MAX = { width: 1040, height: 720 }
 
 const SIDEBAR_MAX = 150
 
+const ASIDE_GAP = 12
+
+const ICON_RAIL = 26
+
 export const CONTROL_INSET = 12
 const sidebarWidth = () => atMost(percent(METRICS.sidebar), pixels(SIDEBAR_MAX))
 
@@ -81,22 +87,11 @@ const SLIDE = 4
 
 const HELD = 0.4
 
-const PULSE = 3
+const WHEEL_START = 'tierLegendary' as const
 
-const WHEEL = ['tierLegendary', 'tierEpic', 'tierRare', 'tierUncommon'] as const
-
-export const rainbow = (palette: Palette) => (): Color => {
-  const turn = ((performance.now() / 1000 / PULSE) % 1) * WHEEL.length
-  const at = Math.floor(turn)
-  return lerp(
-    palette[WHEEL[at % WHEEL.length]].get(),
-    palette[WHEEL[(at + 1) % WHEEL.length]].get(),
-    turn - at,
-  )
-}
-
-export const liveColour = (component: UIComponent, colour: () => Color): void => {
-  component.color = new ConstantColorConstraint(derived(colour), true)
+export const wheelColour = (component: UIComponent, palette: Palette): void => {
+  component.color = new ConstantColorConstraint(palette[WHEEL_START])
+  component.effect(new WheelEffect())
 }
 
 export type NavEntry = string | NavGroup
@@ -106,6 +101,7 @@ export interface ShellOptions {
   entries: NavEntry[]
   selected: () => number
   onSelect: (index: number) => void
+  linkFor?: (index: number) => string | null
   actions?: { label: string | State<string>; onPress: () => void; accent?: State<Color> }[]
   opens?: (close: () => void) => () => void
   searchPlaceholder?: string
@@ -116,11 +112,19 @@ export interface ShellOptions {
   compact?: boolean
   controls?: (into: UIContainer) => void
   sidebarFooter?: (into: UIContainer) => void
+  aside?: {
+    width: number
+    on?: State<boolean>
+    build?: (into: UIContainer) => void
+  }
+  icons?: boolean
 }
 
 export interface Shell {
   content: UIContainer
   search: BasicState<string>
+  box: UIComponent | null
+  aside: UIContainer | null
 }
 
 export interface PressOptions {
@@ -130,6 +134,11 @@ export interface PressOptions {
   height?: number
   accent?: State<Color>
 }
+
+export const rail = (parent: UIComponent, colour: Color | State<Color>, thickness = METRICS.divider): UIBlock =>
+  new UIBlock(colour)
+    .constrain({ width: pixels(thickness), height: percent(1) })
+    .childOf(parent)
 
 export function pressable(
   palette: Palette,
@@ -172,7 +181,7 @@ export function pressable(
     scale: fitted,
     color: tint(() => (!open() ? palette.textDisabled : (accent ?? palette.textHighlight)).get()),
   })
-  if (loud) liveColour(caption, rainbow(palette))
+  if (loud) wheelColour(caption, palette)
   caption.constrain({ x: center(), y: center() }).childOf(box)
 
   box.onPress = (event) => {
@@ -192,7 +201,8 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
   const fade = options.scrollFade ?? 20
 
   const menu = new MutableState(!compact)
-  const drawerWidth = () => (compact ? pixels(SIDEBAR_MAX) : sidebarWidth())
+  const drawerWidth = () =>
+    compact ? pixels(SIDEBAR_MAX) : options.icons ? pixels(ICON_RAIL) : sidebarWidth()
   const drawer = (component: UIComponent): void => {
     if (compact) component.effect(new DrawerEffect(menu, SIDEBAR_MAX + DIVIDER * 2))
   }
@@ -256,7 +266,7 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
     pressable(palette, 'Menu', 40, toggle)
       .constrain({ x: pixels(10), y: center() })
       .childOf(titleContent)
-  } else {
+  } else if (!options.icons) {
     new UIText(options.title, { color: palette.textHighlight })
       .constrain({ x: pixels(10), y: center() })
       .childOf(titleContent)
@@ -287,8 +297,10 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
     placeholder: options.searchPlaceholder ?? 'Search...',
   })
 
+  let box: UIComponent | null = null
   if (options.searchable !== false) {
     const search = new UIBlock(palette.mainBackground)
+    box = search
       .constrain({
         x: sibling(6),
         width: basic(() => Math.min(compact ? 60 : 90, Math.max(50, controlsContent.getWidth() * 0.28))),
@@ -347,6 +359,7 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
     }
 
     const thumb = new UIBlock(palette.scrollbar)
+    thumb.effect(new OwnLayerEffect())
       .constrain({
         y: pixels(derived(() => (metrics()?.offset ?? 0) * divider.getHeight())),
         width: percent(1),
@@ -389,6 +402,7 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
     drawer(middleSeam)
   }
 
+  const beside = options.aside && !compact ? options.aside : null
   const content = new UIContainer()
     .constrain({
       x: compact ? pixels(DIVIDER) : sibling(0),
@@ -399,6 +413,22 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
   content.effect(new ScrollEffect(fade, false, palette.mainBackground))
 
   scrollbar(seam(pixels(0, true)), content)
+
+  let column: UIContainer | null = null
+  if (beside) {
+    const line = seam(pixels(0, true))
+    column = new UIContainer().constrain({ x: pixels(0, true), height: percent(1) }).childOf(bottom)
+    const spread = (): void => {
+      const on = beside.on?.get() ?? true
+      const room = on ? beside.width + ASIDE_GAP : 0
+      content.constrain({ width: minus(fill(false), pixels(room)) })
+      line.constrain({ x: pixels(on ? beside.width + ASIDE_GAP / 2 : 0, true), width: pixels(on ? DIVIDER : 0) })
+      column?.constrain({ width: pixels(on ? beside.width : 0) })
+    }
+    if (beside.on) content.onDispose(beside.on.onSetValue(spread))
+    spread()
+    beside.build?.(column)
+  }
 
   const list = new UIContainer()
     .constrain({
@@ -463,13 +493,20 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
     const pieces = derived(() => {
       const words = said.get()
       if (words !== held.words) {
-        held = { words, pieces: say(mark ? `${words} {${mark}}` : words) }
+        const written = options.icons
+          ? mark
+            ? `{${mark}}`
+            : words.slice(0, 1)
+          : mark
+            ? `${words} {${mark}}`
+            : words
+        held = { words, pieces: say(written) }
       }
       return held.pieces
     })
 
     const caption = new UIRich(pieces, { colour: tint(colour) })
-    if (moving) liveColour(caption, rainbow(palette))
+    if (moving) wheelColour(caption, palette)
     caption
       .constrain({
         x: pixels(derived(() => 10 + indent + (isSelected() || hovered.get() ? SLIDE : 0))),
@@ -528,6 +565,7 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
         () => options.selected() === index,
         () => choose(index),
       )
+      rows[groupIndex].href = options.linkFor?.(index) ?? null
       return
     }
 
@@ -545,6 +583,7 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
         arriving++,
         entry.mark,
       )
+      rows[groupIndex].href = options.linkFor?.(index) ?? null
       new UIBlock(palette.componentHighlight)
         .constrain({ y: sibling(0), width: percent(1), height: pixels(1) })
         .childOf(list)
@@ -611,7 +650,7 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
         false,
         undefined,
         heading + 1 + at,
-      )
+      ).href = options.linkFor?.(index) ?? null
     })
   })
 
@@ -645,7 +684,7 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
     const mid = (row_: UIContainer) => row_.getTop() - list.getTop() + row_.getHeight() / 2
     const top = () => Math.min(mid(from), mid(to))
     const bottom = () => Math.max(mid(from), mid(to))
-    new UIBlock(colour)
+    const shaft = new UIBlock(colour)
       .constrain({
         x: pixels(x),
         y: pixels(derived(top)),
@@ -653,20 +692,23 @@ export function panelShell(root: UIComponent, palette: Palette, options: ShellOp
         height: pixels(derived(() => Math.max(1, bottom() - top()))),
       })
       .childOf(list)
-    new UIBlock(colour)
+    shaft.sealed = true
+    const foot = new UIBlock(colour)
       .constrain({ x: pixels(x), y: pixels(derived(() => mid(from))), width: pixels(4), height: pixels(1) })
       .childOf(list)
+    foot.sealed = true
     const head = new UIBlock(colour).constrain({
       x: pixels(x - 1),
       y: pixels(derived(() => mid(to) - 1)),
       width: pixels(3),
       height: pixels(3),
     })
+    head.sealed = true
     head.effect(new TurnEffect())
     head.childOf(list)
   }
 
   for (const child of list.children) child.effect(new TransitionEffect('top', 0.22))
 
-  return { content, search: input.value }
+  return { content, search: input.value, box, aside: column }
 }

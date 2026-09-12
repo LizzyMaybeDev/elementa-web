@@ -351,11 +351,14 @@ export class UITextInput extends UIComponent {
     const blink = Math.floor(performance.now() / (CURSOR_BLINK_SECONDS * 500)) % 2 === 0
     const showCursor = this.isFocused && blink
 
-    canvas.width = Math.ceil(width * factor)
-    canvas.height = Math.ceil(height * factor)
-
+    const deviceWidth = Math.ceil(width * factor)
+    const deviceHeight = Math.ceil(height * factor)
     const ctx = canvas.getContext('2d')
     if (!ctx) return
+    if (canvas.width !== deviceWidth || canvas.height !== deviceHeight) {
+      canvas.width = deviceWidth
+      canvas.height = deviceHeight
+    } else ctx.clearRect(0, 0, deviceWidth, deviceHeight)
     ctx.setTransform(factor, 0, 0, factor, 0, 0)
     ctx.imageSmoothingEnabled = false
     ctx.clearRect(0, 0, width, height)

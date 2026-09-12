@@ -60,11 +60,13 @@ export interface TextOptions {
   litColor?: Color | State<Color>
   shadow?: boolean
   color?: Color | State<Color>
+  heading?: 1 | 2 | 3
 }
 
 export class UIText extends UIComponent {
   override name = 'UIText'
-  override readonly tag = 'div'
+  override pointing = true
+  override readonly tag: string
 
   private readonly textState: State<string>
   private readonly scaleState: State<number>
@@ -75,6 +77,7 @@ export class UIText extends UIComponent {
 
   constructor(text: string | State<string>, options: TextOptions = {}) {
     super()
+    this.tag = options.heading ? `h${options.heading}` : 'div'
     this.textState = toState(text)
     this.scaleState = toState(options.scale ?? 1)
     this.lit = options.lit ?? null

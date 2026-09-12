@@ -1,7 +1,7 @@
 import { type ColorConstraint, Constraint, ConstantColorConstraint, PixelConstraint } from './constraints'
 import { type Color, TRANSPARENT } from './color'
 import type { Effect } from './effects'
-import { invalidateLayout, islands } from './frame'
+import { invalidateSome, islands } from './frame'
 import { BasicState, type State } from './state'
 
 export interface Constraints {
@@ -46,6 +46,8 @@ export class UIComponent {
   }
 
   onClick: ((event: MouseEvent) => void) | null = null
+
+  href: string | null = null
   onPress: ((event: PointerEvent) => void) | null = null
   onRightClick: ((event: MouseEvent) => void) | null = null
 
@@ -56,7 +58,11 @@ export class UIComponent {
   dragCursor: string | null = null
   onHover: ((hovered: boolean) => void) | null = null
 
+  pointing = false
+
   treeDirty = true
+
+  dirty = true
 
   index = 0
 
@@ -90,13 +96,15 @@ export class UIComponent {
   }
 
   private settle(): void {
-    for (let node: UIComponent | null = this.parent ?? this; node; node = node.parent) {
+    this.dirty = true
+    if (!this.parent) return
+    for (let node: UIComponent | null = this.parent; node; node = node.parent) {
       if (node.sealed) {
         islands.add(node)
         return
       }
     }
-    invalidateLayout()
+    invalidateSome()
   }
 
   constrain(constraints: Constraints): this {
@@ -125,7 +133,12 @@ export class UIComponent {
     this.disposers.length = 0
   }
 
+  protected changed(): void {
+    this.settle()
+  }
+
   effect(effect: Effect): this {
+    this.dirty = true
     this.effects.push(effect)
     if (this.sealed) islands.add(this)
     else this.settle()
@@ -134,8 +147,20 @@ export class UIComponent {
 
   addChild(child: UIComponent): this {
     child.parent = this
+    child.dirty = true
     child.index = this.children.length
     this.children.push(child)
+    this.touched()
+    child.settle()
+    return this
+  }
+
+  insertChild(child: UIComponent, at: number): this {
+    const index = Math.max(0, Math.min(at, this.children.length))
+    child.parent = this
+    child.dirty = true
+    this.children.splice(index, 0, child)
+    for (let n = index; n < this.children.length; n++) this.children[n].index = n
     this.touched()
     child.settle()
     return this
@@ -179,13 +204,14 @@ export class UIComponent {
     }
     this.children.length = 0
     this.touched()
+    this.dirty = true
     for (let node: UIComponent | null = this; node; node = node.parent) {
       if (node.sealed) {
         islands.add(node)
         return this
       }
     }
-    invalidateLayout()
+    invalidateSome()
     return this
   }
 

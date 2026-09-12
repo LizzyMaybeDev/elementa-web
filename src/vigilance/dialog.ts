@@ -70,14 +70,19 @@ export function titled(
   palette: Palette,
   held: Dialog,
   title: string | State<string>,
-  subtitle: string | State<string>,
+  subtitle: string | State<string> | null,
   foot = 10,
-): { head: UIContainer; body: UIContainer } {
+  scale = 1.1,
+): { head: UIContainer; body: UIContainer; title: UIText } {
   const head = new UIContainer()
     .constrain({ x: pixels(12), y: pixels(10), width: minus(percent(1), pixels(24)), height: pixels(HEAD - 14) })
     .childOf(held.panel)
-  new UIText(title, { color: palette.textHighlight, scale: 1.1 }).constrain({ y: pixels(0) }).childOf(head)
-  new UIText(subtitle, { color: palette.textDisabled, scale: 0.8 }).constrain({ y: pixels(15) }).childOf(head)
+  const written = new UIText(title, { color: palette.textHighlight, scale })
+    .constrain({ y: pixels(0) })
+    .childOf(head)
+  if (subtitle !== null) {
+    new UIText(subtitle, { color: palette.textDisabled, scale: 0.8 }).constrain({ y: pixels(15) }).childOf(head)
+  }
   pressable(palette, 'Close', 54, held.dismiss).constrain({ x: pixels(0, true), y: pixels(2) }).childOf(head)
 
   const body = new UIContainer()
@@ -85,5 +90,5 @@ export function titled(
     .childOf(held.panel)
   body.effect(new ScrollEffect(0, false))
 
-  return { head, body }
+  return { head, body, title: written }
 }

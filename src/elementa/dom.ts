@@ -1,9 +1,20 @@
 import { UIComponent, Window } from './component'
 import { setScaleFactor } from './constraints'
-import { leaving, measureScrollers, moving, passDone, rehome, scrollMetrics, shine } from './effects'
-import { building, invalidateScroll, islands, passOwed, rousedNow, setReading } from './frame'
+import {
+  anyMoving,
+  leaving,
+  lightFrom,
+  measureScrollers,
+  moving,
+  passDone,
+  rehome,
+  scrollMetrics,
+  shine,
+} from './effects'
+import { awake, building, flushLater, invalidateScroll, islands, passOwed, rousedNow, runBeforePass, setReading, takeEverything } from './frame'
 import { setStyle } from './style'
 import { touch } from './device'
+import { driveMotion, stepMotion } from './motion'
 
 interface Clip {
   left: number
@@ -16,13 +27,14 @@ const MARGIN = 200
 const AHEAD = 900
 
 const stirring = (component: UIComponent): boolean => {
+  if (!anyMoving()) return false
   for (const node of component.walk()) {
     const element = node.element
     if (element && (moving(element) || leaving(element))) return true
   }
   return false
 }
-const BUDGET = 8
+const BUDGET = 4
 
 export interface RendererOptions {
   scale?: number
@@ -80,11 +92,12 @@ export class DomRenderer {
   private running = false
   private deadline = Infinity
   private margin = MARGIN
-  private readonly clips = new WeakMap<UIComponent, Clip>()
   private warmable = true
   private created = 0
 
-  private live: UIComponent[] = []
+  private live = new Set<UIComponent>()
+  private everything = false
+  private paintedScale = NaN
 
   scale: number
   debug: boolean
@@ -123,6 +136,7 @@ export class DomRenderer {
     this.compact = rect.width < this.compactBelow
 
     host.addEventListener('scroll', invalidateScroll, { capture: true, passive: true })
+    lightFrom(rect.left, rect.top)
     this.delegate()
   }
 
@@ -215,7 +229,6 @@ export class DomRenderer {
   }
 
   render(): void {
-    measureScrollers()
     const rect = this.size
 
     this.compact = rect.width < this.compactBelow
@@ -235,16 +248,21 @@ export class DomRenderer {
 
     this.window_.invalidate()
 
-    this.live = []
+    this.live.clear()
     this.deadline = performance.now() + BUDGET
-    this.position(this.window_, null, this.whole(), false)
+    this.everything = takeEverything() || this.scale !== this.paintedScale
+    this.paintedScale = this.scale
+    try {
+      this.position(this.window_, null, this.whole(), false)
+    } finally {
+      this.everything = false
+    }
     passDone()
     this.warmable = true
     this.onFrame?.()
   }
 
   scrolled(): void {
-    measureScrollers()
     this.deadline = performance.now() + BUDGET
     this.position(this.window_, null, this.whole(), true)
     passDone()
@@ -272,7 +290,15 @@ export class DomRenderer {
   private ensure(component: UIComponent, hostElement: HTMLElement): HTMLElement {
     let element = this.elements.get(component)
     if (!element) {
-      element = document.createElement(component.tag)
+      element = document.createElement(component.href ? 'a' : component.tag)
+      if (component.href) {
+        element.setAttribute('href', component.href)
+        element.addEventListener('click', (event) => {
+          const mouse = event as MouseEvent
+          if (mouse.metaKey || mouse.ctrlKey || mouse.shiftKey || mouse.altKey || mouse.button !== 0) return
+          event.preventDefault()
+        })
+      }
       element.dataset.component = component.name
       element.style.position = 'absolute'
       element.style.margin = '0'
@@ -330,14 +356,17 @@ export class DomRenderer {
       }
       const build = component.lazy
       component.lazy = null
-      building(build)
+      building(build, component.name)
       scrolling = false
       made = true
     }
 
     if (scrolling) {
       const tracks = component.scrollBound || component.effects.some((effect) => effect.scrolls)
-      if (tracks) component.invalidate()
+      if (tracks) {
+        component.invalidate()
+        component.dirty = true
+      }
       else if (component.holdsScrollBound) {
         this.descend(component, element, clip, true, false)
         return
@@ -364,31 +393,49 @@ export class DomRenderer {
       box = new Float64Array(4).fill(NaN)
       this.placed.set(component, box)
     }
+    const moved = box[0] !== l || box[1] !== t || box[2] !== w || box[3] !== h
+    if (moved && !made) for (const node of component.walk()) node.dirty = true
     if (box[0] !== l) setStyle(element, 'left', `${(box[0] = l)}px`)
     if (box[1] !== t) setStyle(element, 'top', `${(box[1] = t)}px`)
     if (box[2] !== w) setStyle(element, 'width', `${(box[2] = w)}px`)
     if (box[3] !== h) setStyle(element, 'height', `${(box[3] = h)}px`)
 
-    const cursor =
-      component.cursor ??
-      (component.onDrag
-        ? (component.dragCursor ?? 'ew-resize')
-        : component.onClick
-          ? 'pointer'
-          : '')
-    setStyle(element, 'cursor', cursor)
-    setStyle(element, 'touch-action', component.onDrag ? 'none' : '')
+    if (component.live) this.live.add(component)
 
-    if (component.live) this.live.push(component)
-    component.paint(element, this.scale)
-    for (const effect of component.effects) effect.apply(element, component, this.scale)
+    if (made || moved || component.dirty || this.everything) {
+      component.dirty = false
+      const cursor =
+        component.cursor ??
+        (component.onDrag
+          ? (component.dragCursor ?? 'ew-resize')
+          : component.onClick
+            ? 'pointer'
+            : '')
+      setStyle(element, 'cursor', cursor)
+      setStyle(element, 'touch-action', component.onDrag ? 'none' : '')
+      const answers =
+        component.children.length > 0 ||
+        component.pointing ||
+        !!(
+          component.onClick ||
+          component.onRightClick ||
+          component.onHover ||
+          component.onPress ||
+          component.onDrag ||
+          component.cursor ||
+          component.href
+        )
+      setStyle(element, 'pointer-events', answers ? '' : 'none')
 
-    if (this.debug) {
-      setStyle(element, 'outline', '1px solid rgba(255, 0, 128, 0.35)')
-      setStyle(element, 'outline-offset', '-1px')
+      component.paint(element, this.scale)
+      for (const effect of component.effects) effect.apply(element, component, this.scale)
+
+      if (this.debug) {
+        setStyle(element, 'outline', '1px solid rgba(255, 0, 128, 0.35)')
+        setStyle(element, 'outline-offset', '-1px')
+      }
     }
 
-    if (component.sealed) this.clips.set(component, clip)
     this.descend(component, element, clip, scrolling, made)
     if (component.sealed) islands.delete(component)
     setReading(parent)
@@ -404,11 +451,38 @@ export class DomRenderer {
   }
 
   private alone(island: UIComponent): void {
-    const clip = this.clips.get(island)
     const home = island.parent?.element
-    if (!clip || !home || island.element?.parentElement !== home) return
+    if (!home || island.element?.parentElement !== home) return
     island.invalidate()
-    this.position(island, island.parent, clip, false)
+    this.position(island, island.parent, this.clipFor(island), false)
+  }
+
+  private clipFor(component: UIComponent): Clip {
+    const above: UIComponent[] = []
+    for (let node = component.parent; node; node = node.parent) above.push(node)
+    let clip = this.whole()
+    for (let i = above.length - 1; i >= 0; i--) {
+      const node = above[i]
+      const element = node.element
+      if (element) clip = this.within(node, element, clip)
+    }
+    return clip
+  }
+
+  private within(component: UIComponent, element: HTMLElement, clip: Clip): Clip {
+    for (const effect of component.effects) {
+      if (!effect.clips) continue
+      const shift = scrollMetrics(element).top / this.scale
+      const left = component.getLeft()
+      const top = component.getTop()
+      return {
+        left: Math.max(clip.left, left),
+        top: Math.max(clip.top, top) + shift,
+        right: Math.min(clip.right, left + component.getWidth()),
+        bottom: Math.min(clip.bottom, top + component.getHeight()) + shift,
+      }
+    }
+    return clip
   }
 
   private rouse(): void {
@@ -452,29 +526,19 @@ export class DomRenderer {
     component.culled = out
     if (out) {
       component.culledBelow = false
-      if (wasIn) for (const child of component.children) this.position(child, component, clip, scrolling)
+      if (wasIn && !scrolling) for (const child of component.children) this.position(child, component, clip, false)
       if (!component.released && this.outside(component, clip, AHEAD) && !stirring(component)) {
         component.released = true
-        for (const node of component.walk()) node.release()
+        for (const node of component.walk()) {
+          node.release()
+          node.dirty = true
+        }
       }
       return
     }
     component.released = false
 
-    let inner = clip
-    for (const effect of component.effects) {
-      if (!effect.clips) continue
-      const shift = scrollMetrics(element).top / this.scale
-      const left = component.getLeft()
-      const top = component.getTop()
-      inner = {
-        left: Math.max(clip.left, left),
-        top: Math.max(clip.top, top) + shift,
-        right: Math.min(clip.right, left + component.getWidth()),
-        bottom: Math.min(clip.bottom, top + component.getHeight()) + shift,
-      }
-      break
-    }
+    const inner = this.within(component, element, clip)
 
     const partial = scrolling && !fresh
     let below = false
@@ -489,15 +553,24 @@ export class DomRenderer {
   start(): void {
     if (this.running) return
     this.running = true
+    driveMotion(true)
     let reported = ''
     const loop = () => {
       if (!this.running) return
       try {
+        const now = performance.now()
+        flushLater()
+        stepMotion(now)
         shine()
-        const pass = passOwed(performance.now())
-        if (pass === 'layout') this.render()
-        else if (pass === 'scroll') this.scrolled()
-        else if (pass === 'islands') {
+        const painting = runBeforePass(this.scale)
+        const pass = passOwed(now)
+        if (pass === 'layout') {
+          this.render()
+          this.paintLive()
+        } else if (pass === 'scroll') {
+          this.scrolled()
+          if (painting) this.paintLive()
+        } else if (pass === 'islands') {
           this.rouse()
           this.settle()
           this.paintLive()
@@ -506,6 +579,7 @@ export class DomRenderer {
           this.paintLive()
           this.warm()
         }
+        measureScrollers(pass === 'layout')
       } catch (error) {
         const message = (error as Error).message
         if (message !== reported) {
@@ -521,12 +595,24 @@ export class DomRenderer {
   private paintLive(): void {
     for (const component of this.live) {
       const element = this.elements.get(component)
-      if (element) component.paint(element, this.scale)
+      if (!element) continue
+      setReading(component)
+      component.paint(element, this.scale)
     }
+    for (const held of awake) {
+      const component = held as UIComponent
+      if (this.live.has(component)) continue
+      const element = this.elements.get(component)
+      if (!element) continue
+      setReading(component)
+      component.paint(element, this.scale)
+    }
+    setReading(null)
   }
 
   stop(): void {
     this.running = false
+    driveMotion(false)
     cancelAnimationFrame(this.frame)
   }
 
@@ -534,6 +620,8 @@ export class DomRenderer {
     const observer = new ResizeObserver((entries) => {
       const box = entries[0]?.contentRect
       if (box) this.size = { width: box.width, height: box.height }
+      const where = this.host.getBoundingClientRect()
+      lightFrom(where.left, where.top)
       this.render()
     })
     observer.observe(this.host)

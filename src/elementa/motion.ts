@@ -1,5 +1,6 @@
 
 import { writtenStyle } from './style'
+import { later } from './frame'
 
 export interface Step {
   x: number
@@ -107,6 +108,7 @@ export interface Play extends Going {
   born: number
   timer: ReturnType<typeof setTimeout> | null
   then: (() => void) | null
+  onMain: boolean
 }
 
 const movers = new Map<HTMLElement, Play>()
@@ -163,10 +165,10 @@ function settle(element: HTMLElement, then: (() => void) | null = null): void {
     then?.()
     return
   }
-  const later = (f: () => void): number =>
+  const onFrame = (f: () => void): number =>
     typeof requestAnimationFrame === 'function' ? requestAnimationFrame(f) : (setTimeout(f, FRAME) as unknown as number)
-  hold.settle = later(() => {
-    hold.settle = later(() => {
+  hold.settle = onFrame(() => {
+    hold.settle = onFrame(() => {
       hold.settle = null
       if (holds.get(element) !== hold) return
       holds.delete(element)
@@ -203,18 +205,44 @@ export function quietly(build: () => void): void {
   }
 }
 
-const started = (): void => {
-  if (composited() || frame || typeof requestAnimationFrame === 'undefined') return
+let driven = false
+export const driveMotion = (by: boolean): void => {
+  driven = by
+  if (by && frame) {
+    cancelAnimationFrame(frame)
+    frame = 0
+  }
+}
+
+const started = (main = false): void => {
+  if ((composited() && !main) || driven || frame || typeof requestAnimationFrame === 'undefined') return
   last = performance.now()
   frame = requestAnimationFrame(tick)
 }
 
+export function stepMotion(now: number): void {
+  if (!stepping()) {
+    last = 0
+    return
+  }
+  const dt = last === 0 ? FRAME : Math.min(34, Math.max(0, now - last))
+  last = now
+  advance(dt, !driven && composited())
+}
+
+const stepping = (): boolean => {
+  if (!composited() || driven) return movers.size > 0
+  for (const play of movers.values()) if (play.onMain) return true
+  return false
+}
+
 function tick(now: number): void {
   frame = 0
+  if (driven) return
   const dt = Math.min(34, Math.max(0, now - last))
   last = now
-  advance(dt)
-  if (movers.size) frame = requestAnimationFrame(tick)
+  advance(dt, composited())
+  if (stepping()) frame = requestAnimationFrame(tick)
 }
 
 export function step(play: Going & { steps: Step[]; length: number; toOpacity: number; easing?: boolean }, dt: number): boolean {
@@ -281,9 +309,16 @@ const write = (element: HTMLElement, play: Play): void => {
   const home = homeOf(element)
   const x = play.x + home.x
   const y = play.y + home.y
-  element.style.translate = x === 0 && y === 0 ? '' : `${x}px ${y}px`
-  if (play.fades) element.style.opacity = play.opacity === 1 ? '' : `${play.opacity}`
+  const translate = x === 0 && y === 0 ? '' : `${x}px ${y}px`
+  if (element.style.translate !== translate) element.style.translate = translate
+  if (play.fades) {
+    const opacity = play.opacity === 1 ? '' : `${play.opacity}`
+    if (element.style.opacity !== opacity) element.style.opacity = opacity
+  }
 }
+
+const atRest = (play: Play): boolean =>
+  play.hold <= 0 && !play.turning && play.gone >= play.length && play.opacity === play.toOpacity
 
 const behind = (): number => {
   const at = typeof document !== 'undefined' ? document.timeline?.currentTime : null
@@ -333,21 +368,23 @@ function due(element: HTMLElement, play: Play): void {
   if (play.timer !== null) clearTimeout(play.timer)
   const left = (play.run.length - 1) * FRAME - Number(play.played?.currentTime ?? 0)
   play.timer = setTimeout(
-    () => {
-      play.timer = null
-      if (movers.get(element) !== play || play.played === null) return
-      if (finished(play)) finish(element, play)
-      else due(element, play)
-    },
+    () =>
+      later(() => {
+        play.timer = null
+        if (movers.get(element) !== play || play.played === null) return
+        if (finished(play)) finish(element, play)
+        else due(element, play)
+      }),
     Math.max(0, left) + 4,
   )
 }
 
 function plan(element: HTMLElement, play: Play, edit: (play: Play) => void): void {
-  if (!composited()) {
+  if (!composited() || play.onMain || driven) {
+    unplay(play)
     edit(play)
     write(element, play)
-    started()
+    started(play.onMain || driven)
     return
   }
   const playing = play.played && play.run.length > 0 && !finished(play)
@@ -451,6 +488,7 @@ const newPlay = (): Play => ({
   born: 0,
   timer: null,
   then: null,
+  onMain: false,
 })
 
 const playOf = (element: HTMLElement): Play => {
@@ -502,7 +540,7 @@ export function slipAway(element: HTMLElement, dx: number, dy: number, layout?: 
   if (!motion) return
   const play = playOf(element)
   slippedAway.add(element)
-  if (layout && composited()) keepPainted(element, layout)
+  if (layout && composited() && !driven) keepPainted(element, layout)
   plan(element, play, (at) => {
     at.easing = false
     at.x += dx
@@ -529,7 +567,7 @@ export function moveFrom(element: HTMLElement, dx: number, dy: number, layout?: 
   if (!motion) return
   const play = playOf(element)
   slippedAway.delete(element)
-  if (layout && composited()) keepPainted(element, layout)
+  if (layout && composited() && !driven) keepPainted(element, layout)
   plan(element, play, (at) => {
     at.easing = false
     at.x += dx
@@ -564,8 +602,9 @@ export function moveFrom(element: HTMLElement, dx: number, dy: number, layout?: 
 
 export type Way = 'above' | 'below' | 'aside' | 'still'
 
-export function arrive(element: HTMLElement, way: Way = 'above', order = 0): void {
+export function arrive(element: HTMLElement, way: Way = 'above', order = 0, onMain = false): void {
   const play = playOf(element)
+  play.onMain = onMain
   const seen = play.fades && play.toOpacity === 0 && play.then !== null ? play.opacity : 0
   if (movers.has(element) && play.fades && play.toOpacity === 1 && play.then === null && play.opacity < 1) return
   play.then = null
@@ -582,7 +621,7 @@ export function arrive(element: HTMLElement, way: Way = 'above', order = 0): voi
     const from =
       way === 'above' ? { x: 0, y: -ARRIVE_FROM } : way === 'below' ? { x: 0, y: ARRIVE_FROM } : way === 'aside' ? { x: ASIDE_FROM, y: 0 } : { x: 0, y: 0 }
     at.fades = true
-    at.hold = order * STAGGER + othersSettleIn(element)
+    at.hold = order * STAGGER + (onMain ? 0 : othersSettleIn(element))
     at.opacity = seen
     at.toOpacity = 1
     at.turning = false
@@ -613,6 +652,15 @@ export function hide(element: HTMLElement): void {
   element.style.opacity = '0'
 }
 
+export const anyMoving = (): boolean => movers.size > 0
+
+export function slideOf(element: HTMLElement): { x: number; y: number; opacity: number } | null {
+  const play = movers.get(element)
+  if (!play) return null
+  const home = homeOf(element)
+  return { x: play.x + home.x, y: play.y + home.y, opacity: play.fades ? play.opacity : 1 }
+}
+
 export const hidden = (element: HTMLElement): boolean => {
   const play = movers.get(element)
   return play ? play.toOpacity === 0 && play.then === null : element.style.opacity === '0'
@@ -636,7 +684,11 @@ export function unleave(element: HTMLElement | null): void {
   if (!element) return
   element.classList.remove('going')
   const play = movers.get(element)
-  if (!play || !play.then) return
+  if (!play) {
+    if (element.style.opacity === '0') element.style.opacity = ''
+    return
+  }
+  if (!play.then) return
   if (slippedAway.has(element)) {
     arrive(element, 'aside')
     return
@@ -652,14 +704,24 @@ export function reword(element: HTMLElement | null): void {
   if (element) arrive(element, 'aside')
 }
 
-export function advance(ms: number): void {
-  while (ms > 0) {
-    const dt = Math.min(FRAME, ms)
-    ms -= dt
-    for (const [element, play] of movers) {
-      if (step(play, dt)) finish(element, play)
-      else write(element, play)
+export function advance(ms: number, onlyOnMain = false): void {
+  const done: HTMLElement[] = []
+  for (const [element, play] of movers) {
+    if (onlyOnMain && !play.onMain) continue
+    if (atRest(play)) continue
+    let left = ms
+    let finished = false
+    while (left > 0 && !finished) {
+      const dt = Math.min(FRAME, left)
+      left -= dt
+      finished = step(play, dt)
     }
+    if (finished) done.push(element)
+    else write(element, play)
+  }
+  for (const element of done) {
+    const play = movers.get(element)
+    if (play) finish(element, play)
   }
 }
 

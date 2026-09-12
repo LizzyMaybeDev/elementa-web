@@ -1,6 +1,6 @@
 import { UIComponent } from './component'
 import { Constraint, type Axis } from './constraints'
-import { invalidateLayout } from './frame'
+import { type Node_, invalidateFor, reader } from './frame'
 import { setStyle } from './style'
 
 interface Entry {
@@ -8,6 +8,13 @@ interface Entry {
   promise: Promise<HTMLImageElement>
   ready: boolean
   drawn: boolean
+  bitmap: ImageBitmap | null
+  readers: Set<Node_>
+}
+
+const looked = (entry: Entry | undefined): void => {
+  const who = reader()
+  if (who && entry) entry.readers.add(who)
 }
 
 const cache = new Map<string, Entry>()
@@ -21,18 +28,28 @@ export function loadImage(src: string): Promise<HTMLImageElement> {
     image,
     ready: false,
     drawn: false,
+    bitmap: null,
+    readers: new Set(),
     promise: new Promise((resolve, reject) => {
       image.onload = () => {
         entry.ready = true
         const done = (): void => {
           entry.drawn = true
-          invalidateLayout()
+          if (entry.readers.size) invalidateFor(entry.readers)
+          resolve(image)
         }
         const decode = typeof image.decode === 'function' ? image.decode() : null
-        if (decode) void decode.then(done, done)
-        else done()
-        invalidateLayout()
-        resolve(image)
+        const bitmap =
+          typeof createImageBitmap === 'function'
+            ? createImageBitmap(image, { premultiplyAlpha: 'none', colorSpaceConversion: 'none' }).then(
+                (made) => {
+                  entry.bitmap = made
+                },
+                () => {},
+              )
+            : null
+        const both = Promise.all([decode, bitmap].filter((one) => one !== null))
+        void both.then(done, done)
       }
       image.onerror = () => reject(new Error(`could not load image at ${src}`))
     }),
@@ -44,14 +61,14 @@ export function loadImage(src: string): Promise<HTMLImageElement> {
 
 const masks = new Map<string, Promise<string>>()
 
-export function maskImage(base: string, mask: string): Promise<string> {
-  const key = `${base}
-${mask}`
+export function maskedImage(base: string, covers: readonly string[]): Promise<string> {
+  if (covers.length === 0) return Promise.resolve(base)
+  const key = [base, ...covers].join('\n')
   const held = masks.get(key)
   if (held) return held
 
-  const work = Promise.all([loadImage(base), loadImage(mask)])
-    .then(([picture, cover]) => {
+  const work = Promise.all([loadImage(base), ...covers.map((cover) => loadImage(cover))])
+    .then(([picture, ...sheets]) => {
       const canvas = document.createElement('canvas')
       canvas.width = picture.naturalWidth
       canvas.height = picture.naturalHeight
@@ -61,13 +78,19 @@ ${mask}`
       ctx.drawImage(picture, 0, 0)
       const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height)
 
-      ctx.clearRect(0, 0, canvas.width, canvas.height)
-      ctx.drawImage(cover, 0, 0, canvas.width, canvas.height)
-      const marks = ctx.getImageData(0, 0, canvas.width, canvas.height)
+      ctx.imageSmoothingEnabled = false
+      const keep = new Float32Array(pixels.data.length / 4).fill(1)
+      for (const cover of sheets) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height)
+        ctx.drawImage(cover, 0, 0, canvas.width, canvas.height)
+        const marks = ctx.getImageData(0, 0, canvas.width, canvas.height)
+        for (let at = 0; at < keep.length; at++) {
+          keep[at] *= (marks.data[at * 4] * marks.data[at * 4 + 3]) / (255 * 255)
+        }
+      }
 
-      for (let at = 0; at < pixels.data.length; at += 4) {
-        const keep = (marks.data[at] * marks.data[at + 3]) / (255 * 255)
-        pixels.data[at + 3] = Math.round(pixels.data[at + 3] * keep)
+      for (let at = 0; at < keep.length; at++) {
+        pixels.data[at * 4 + 3] = Math.round(pixels.data[at * 4 + 3] * keep[at])
       }
       ctx.putImageData(pixels, 0, 0)
       return canvas.toDataURL()
@@ -79,6 +102,9 @@ ${mask}`
   return work
 }
 
+export const maskImage = (base: string, mask: string): Promise<string> =>
+  maskedImage(base, [mask])
+
 const lit = new Map<string, TexImageSource>()
 
 export function litSheet(texture: string, glow: string | null): TexImageSource | null {
@@ -87,15 +113,15 @@ ${glow ?? ''}`
   const held = lit.get(key)
   if (held) return held
 
-  const base = peekImage(texture)
-  const light = glow ? peekImage(glow) : null
+  const base = peekPixels(texture)
+  const light = glow ? peekPixels(glow) : null
   if (!base || (glow && !light)) return null
 
   let out: TexImageSource = base
   if (light) {
     const canvas = document.createElement('canvas')
-    canvas.width = base.naturalWidth
-    canvas.height = base.naturalHeight
+    canvas.width = base.width
+    canvas.height = base.height
     const ctx = canvas.getContext('2d')
     if (!ctx) return null
     ctx.imageSmoothingEnabled = false
@@ -109,11 +135,23 @@ ${glow ?? ''}`
   return out
 }
 
-export const decoded = (src: string): boolean => cache.get(src)?.drawn ?? false
+export const decoded = (src: string): boolean => {
+  const entry = cache.get(src)
+  looked(entry)
+  return entry?.drawn ?? false
+}
 
 export function peekImage(src: string): HTMLImageElement | null {
   const entry = cache.get(src)
-  return entry?.ready ? entry.image : null
+  looked(entry)
+  return entry?.drawn ? entry.image : null
+}
+
+export function peekPixels(src: string): ImageBitmap | HTMLImageElement | null {
+  const entry = cache.get(src)
+  looked(entry)
+  if (!entry?.drawn) return null
+  return entry.bitmap ?? entry.image
 }
 
 export function imageSize(src: string): { width: number; height: number } | null {
@@ -146,7 +184,7 @@ export class UIImage extends UIComponent {
     if (src === this.src) return this
     this.src = src
     void loadImage(src).catch(() => {})
-    invalidateLayout()
+    this.changed()
     return this
   }
 

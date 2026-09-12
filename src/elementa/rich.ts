@@ -100,6 +100,7 @@ export interface RichOptions {
   shadow?: boolean
   lineSpacing?: number
   centred?: boolean
+  heading?: 1 | 2 | 3
 }
 
 class RichHeightConstraint extends Constraint {
@@ -124,7 +125,7 @@ class RichWidthConstraint extends Constraint {
 
 export class UIRich extends UIComponent {
   override name = 'UIRich'
-  override readonly tag = 'div'
+  override readonly tag: string
 
   private readonly said: State<Piece[]>
   private laid: { pieces: Piece[]; width: number; lines: Piece[][] } | null = null
@@ -142,6 +143,7 @@ export class UIRich extends UIComponent {
     readonly wraps = false,
   ) {
     super()
+    this.tag = options.heading ? `h${options.heading}` : 'div'
     this.said = toState(said)
     this.scale = options.scale ?? 1
     this.shadow = options.shadow ?? true

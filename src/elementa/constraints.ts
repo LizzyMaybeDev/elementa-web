@@ -281,6 +281,17 @@ export class ChildBasedSizeConstraint extends Constraint {
   protected override size(component: UIComponent, axis: Axis): number {
     const children = (this.constrainTo ?? component).children
     if (children.length === 0) return 0
+
+    if (children.some((child) => (axis.horizontal ? child.x : child.y) instanceof CramSiblingConstraint)) {
+      let low = Infinity
+      let high = -Infinity
+      for (const child of children) {
+        low = Math.min(low, axis.start(child))
+        high = Math.max(high, axis.end(child))
+      }
+      return high > low ? high - low : 0
+    }
+
     let total = (children.length - 1) * this.padding
     for (const child of children) total += axis.size(child) + axis.padding(child)
     return total

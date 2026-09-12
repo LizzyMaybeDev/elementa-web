@@ -42,6 +42,7 @@ export function foldable(palette: Palette, into: UIContainer, options: FoldOptio
     .constrain({ y: sibling(options.gap ?? 8), width: percent(1), height: pixels(14) })
     .childOf(into)
   bar.effect(new TransitionEffect('top', 0.25))
+  bar.sealed = true
 
   const over = hoverState(bar)
   new UIBlock(tint(() => (over.get() ? palette.componentHighlight : palette.componentBackground).get()))

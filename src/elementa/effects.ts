@@ -3,11 +3,14 @@ import { type ColorConstraint, ConstantColorConstraint } from './constraints'
 import { type Color, shadowOf, toCss, withAlpha } from './color'
 import { type State, toState } from './state'
 import { setStyle } from './style'
+import { later, laterStill } from './frame'
 import { touch } from './device'
+import { cardOf, recall, sight, sighted } from './sight'
 import {
   type Step,
   ARRIVE_MS,
   alongPath,
+  anyMoving,
   arrive as bring,
   arrivesAfter,
   gridPath,
@@ -27,7 +30,7 @@ import {
   unleave,
 } from './motion'
 
-export { type Step, ARRIVE_MS, alongPath, arrivesAfter, bring as arrive, gridPath, leaving, moving, reword, standing, unleave }
+export { type Step, ARRIVE_MS, alongPath, anyMoving, arrivesAfter, bring as arrive, gridPath, leaving, moving, reword, standing, unleave }
 
 export abstract class Effect {
   abstract apply(element: HTMLElement, component: UIComponent, scale: number): void
@@ -51,7 +54,7 @@ const UNSCROLLED: ScrollMetrics = { top: 0, height: 0, client: 0 }
 export const scrollMetrics = (element: HTMLElement | null): ScrollMetrics =>
   (element && measured.get(element)) ?? UNSCROLLED
 
-export function measureScrollers(): void {
+export function measureScrollers(sizes = false): void {
   for (const element of scrollers) {
     if (!element.isConnected) {
       scrollers.delete(element)
@@ -61,10 +64,13 @@ export function measureScrollers(): void {
     if (!held) {
       held = { top: 0, height: 0, client: 0 }
       measured.set(element, held)
+      sizes = true
     }
     held.top = element.scrollTop
-    held.height = element.scrollHeight
-    held.client = element.clientHeight
+    if (sizes) {
+      held.height = element.scrollHeight
+      held.client = element.clientHeight
+    }
     if (sendTo && sendTo.scroller === element) held.top = sendTo.at
   }
 }
@@ -91,6 +97,39 @@ export class OutlineEffect extends Effect {
 
   override invalidate(): void {
     this.color.invalidate()
+  }
+}
+
+const WHEEL_SECONDS = 3
+
+export class WheelEffect extends Effect {
+  private on: HTMLElement | null = null
+
+  override apply(element: HTMLElement): void {
+    if (this.on === element) return
+    this.on = element
+    style()
+    element.classList.add('wheeling')
+  }
+}
+
+export class SkippableEffect extends Effect {
+  private on: HTMLElement | null = null
+
+  override apply(element: HTMLElement): void {
+    if (this.on === element) return
+    this.on = element
+    setStyle(element, 'content-visibility', 'auto')
+  }
+}
+
+export class OwnLayerEffect extends Effect {
+  private on: HTMLElement | null = null
+
+  override apply(element: HTMLElement): void {
+    if (this.on === element) return
+    this.on = element
+    setStyle(element, 'will-change', 'transform')
   }
 }
 
@@ -142,7 +181,6 @@ function style(): void {
   styled = true
   const sheet = document.createElement('style')
   sheet.textContent = `
-    
     .recolouring, .recolouring * {
       transition:
         background-color ${RECOLOUR}s ease,
@@ -151,12 +189,12 @@ function style(): void {
         text-shadow ${RECOLOUR}s ease !important;
     }
     @keyframes enter-side { from { opacity: 0; transform: translateX(28px) } }
-    @keyframes drain { from { width: 100% } to { width: 0% } }
+    @keyframes drain { from { transform: scaleX(1) } to { transform: scaleX(0) } }
     .enters { animation: enter-side 0.85s cubic-bezier(0.22, 1, 0.36, 1) both }
     .exits { animation: enter-side ${LEAVE_SECONDS}s ease-in reverse both !important }
-    .draining { animation: drain linear both }
-    
-    
+    .draining { animation: drain linear both; transform-origin: left center }
+    @keyframes wheel { to { filter: hue-rotate(360deg) } }
+    .wheeling { animation: wheel ${WHEEL_SECONDS}s linear infinite; will-change: filter }
     @keyframes swell {
       from { transform: translate(-50%, -50%) scale(0) }
       to { transform: translate(-50%, -50%) scale(1) }
@@ -171,7 +209,6 @@ function style(): void {
     .ripple {
       position: absolute;
       pointer-events: none;
-      
       background: radial-gradient(
         circle closest-side at 50% 50%,
         rgba(255, 255, 255, 0) 40%,
@@ -189,7 +226,6 @@ function style(): void {
         dim ${WASH_SECONDS}s linear both;
     }
 
-    
     @keyframes bloom {
       from { transform: translate(-50%, -50%) scale(0); opacity: 0.6 }
       55% { opacity: 0.3 }
@@ -203,7 +239,6 @@ function style(): void {
       animation: bloom 0.78s cubic-bezier(0.19, 0.84, 0.26, 1) forwards;
     }
 
-    
     @keyframes sparkgrow {
       from { transform: translate(-50%, -50%) scale(0.18) }
       to { transform: translate(-50%, -50%) scale(2.9) }
@@ -216,7 +251,6 @@ function style(): void {
     .spark {
       position: absolute;
       pointer-events: none;
-      
       background: radial-gradient(
         circle closest-side at 50% 50%,
         rgba(255, 255, 255, 0.5) 0%,
@@ -234,8 +268,6 @@ function style(): void {
         sparkgo ${SPARK_SECONDS}s linear both;
     }
 
-    
-    
     @keyframes pointed {
       0% { opacity: 0 }
       6% { opacity: 1 }
@@ -243,8 +275,14 @@ function style(): void {
       100% { opacity: 0 }
     }
     .pointed { animation: pointed 5.4s cubic-bezier(0.33, 1, 0.68, 1) both }
+    @keyframes shaken {
+      10%, 90% { transform: translateX(-1px) }
+      20%, 80% { transform: translateX(2px) }
+      30%, 50%, 70% { transform: translateX(-3px) }
+      40%, 60% { transform: translateX(3px) }
+    }
+    .nudged { animation: pointed 5.4s cubic-bezier(0.33, 1, 0.68, 1) both, shaken 0.5s cubic-bezier(0.36, 0.07, 0.19, 0.97) both }
 
-    
     .tap {
       cursor: pointer;
       text-decoration: underline;
@@ -253,7 +291,25 @@ function style(): void {
     }
     .tap:hover { filter: brightness(1.35) }
 
-    
+    .halo { position: relative }
+    .halo::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      mix-blend-mode: screen;
+      background: radial-gradient(
+        closest-side,
+        var(--halo-core, transparent) 0%,
+        var(--halo-core, transparent) 12%,
+        var(--halo-mid, transparent) 30%,
+        var(--halo-soft, transparent) 46%,
+        var(--halo-far, transparent) 64%,
+        var(--halo-edge, transparent) 82%,
+        transparent 100%
+      );
+    }
+
     .glimmer {
       filter:
         drop-shadow(0 0 calc(var(--glimmer, 1px) * 2) currentColor)
@@ -281,29 +337,41 @@ function style(): void {
       -webkit-text-fill-color: transparent;
       animation: shimmer 2.8s linear infinite;
     }
-    .lit::before, .lit::after {
+    @property --lit { syntax: '<number>'; inherits: false; initial-value: 0 }
+    @property --mx { syntax: '<length>'; inherits: false; initial-value: -1000px }
+    @property --my { syntax: '<length>'; inherits: false; initial-value: -1000px }
+    .lit.easing { transition: --mx 0.25s ease-out, --my 0.25s ease-out }
+    .lit.halo.on::before, .lit.rim.on::after {
       content: '';
       position: absolute;
       inset: 0;
       border-radius: inherit;
       pointer-events: none;
-      opacity: var(--lit, 0);
-      transition: opacity 0.35s ease-out;
+      --lit: inherit;
+      --mx: inherit;
+      --my: inherit;
     }
-    .lit::before {
-      background: radial-gradient(
-        ${REACH * 1.6}px circle at var(--mx, -1000px) var(--my, -1000px),
-        var(--glow, transparent),
-        transparent 65%
+    .lit.rim::after { z-index: 1 }
+    .lit.halo::before {
+      background-image: radial-gradient(
+        circle closest-side,
+        color-mix(in srgb, var(--glow, transparent) calc(var(--lit, 0) * 100%), transparent),
+        transparent ${Math.floor((REACH / (REACH * 1.6)) * 100) - 1}%
       );
+      background-size: ${REACH * 3.2}px ${REACH * 3.2}px;
+      background-repeat: no-repeat;
+      background-position: calc(var(--mx, -1000px) - ${REACH * 1.6}px) calc(var(--my, -1000px) - ${REACH * 1.6}px);
     }
-    .lit::after {
+    .lit.rim::after {
       padding: 1px;
-      background: radial-gradient(
-        ${REACH}px circle at var(--mx, -1000px) var(--my, -1000px),
-        var(--rim, transparent),
+      background-image: radial-gradient(
+        circle closest-side,
+        color-mix(in srgb, var(--rim, transparent) calc(var(--lit, 0) * 100%), transparent),
         transparent 70%
       );
+      background-size: ${REACH * 2}px ${REACH * 2}px;
+      background-repeat: no-repeat;
+      background-position: calc(var(--mx, -1000px) - ${REACH}px) calc(var(--my, -1000px) - ${REACH}px);
       -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
       -webkit-mask-composite: xor;
       mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
@@ -579,68 +647,75 @@ export class RiseEffect extends Effect {
   }
 }
 
-const EDGE_SLACK = 48
 const STAGGER_MAX = 10
 
-const arrivals = new Map<Element | null, IntersectionObserver>()
-const watchedBy = new WeakMap<HTMLElement, IntersectionObserver>()
+const watched = new WeakSet<HTMLElement>()
 const scrolledTo = new Map<Element | null, number>()
 
-function observerFor(element: HTMLElement): IntersectionObserver | null {
-  if (typeof IntersectionObserver === 'undefined') return null
-  const root = element.parentElement?.closest('[data-scrolls]') ?? null
-  for (const [held, watching] of arrivals) {
-    if (held && !held.isConnected) {
-      watching.disconnect()
-      arrivals.delete(held)
-    }
+const SCROLLING_FOR = 200
+
+const coming: IntersectionObserverEntry[] = []
+let bringing = false
+export const arrivalCounts = { seen: 0, out: 0, waiting: 0, batches: 0, brought: 0, watched: 0 }
+
+const arrived = (entry: IntersectionObserverEntry): void => {
+  const target = entry.target as HTMLElement
+  arrivalCounts.seen++
+  if (!target.isConnected) return
+  if (!entry.isIntersecting) {
+    arrivalCounts.out++
+    if (hidden(target)) later(() => bring(target, 'still', 0, true))
+    return
   }
-  let held = arrivals.get(root)
-  if (!held) {
-    held = new IntersectionObserver(
-      (entries) => {
-        if (root && !root.isConnected) {
-          held?.disconnect()
-          arrivals.delete(root)
-          return
-        }
-        const coming: IntersectionObserverEntry[] = []
-        const at = root ? root.scrollTop : (globalThis.scrollY ?? 0)
-        const above = at < (scrolledTo.get(root) ?? at)
-        scrolledTo.set(root, at)
-        for (const entry of entries) {
-          const target = entry.target as HTMLElement
-          if (!target.isConnected) continue
-          if (!entry.isIntersecting) {
-            if (!hidden(target) && !moving(target) && !leaving(target)) hide(target)
-            continue
-          }
-          if (!hidden(target)) continue
-          coming.push(entry)
-        }
-        coming.sort(
-          (a, b) =>
-            a.boundingClientRect.top - b.boundingClientRect.top ||
-            a.boundingClientRect.left - b.boundingClientRect.left,
-        )
-        if (above) coming.reverse()
-        coming.forEach((entry, order) => {
-          bring(entry.target as HTMLElement, above ? 'below' : 'above', Math.min(order, STAGGER_MAX))
-        })
-      },
-      { root, rootMargin: `${EDGE_SLACK}px 0px` },
+  if (!hidden(target)) return
+  coming.push(entry)
+  arrivalCounts.waiting++
+  if (bringing) return
+  bringing = true
+  later(() => {
+    bringing = false
+    arrivalCounts.batches++
+    const batch = coming.splice(0, coming.length)
+    const first = batch[0]?.target as HTMLElement | undefined
+    if (!first) return
+    const root = first.parentElement?.closest('[data-scrolls]') ?? null
+    const at = root ? scrollMetrics(root as HTMLElement).top : (globalThis.scrollY ?? 0)
+    const above = at < (scrolledTo.get(root) ?? at)
+    scrolledTo.set(root, at)
+    batch.sort(
+      (a, b) =>
+        a.boundingClientRect.top - b.boundingClientRect.top ||
+        a.boundingClientRect.left - b.boundingClientRect.left,
     )
-    arrivals.set(root, held)
-  }
-  return held
+    if (above) batch.reverse()
+    const orders = new Map<Element | null, number>()
+    for (const entry of batch) {
+      const target = entry.target as HTMLElement
+      if (!target.isConnected || !hidden(target)) continue
+      const parent = target.parentElement
+      let order = orders.get(parent)
+      if (order === undefined) {
+        order = orders.size
+        orders.set(parent, order)
+      }
+      arrivalCounts.brought++
+      bring(target, above ? 'below' : 'above', Math.min(order, STAGGER_MAX), true)
+    }
+  })
 }
 
 const watch = (element: HTMLElement): void => {
-  const watching = observerFor(element)
-  if (!watching || watchedBy.get(element) === watching) return
-  watchedBy.get(element)?.unobserve(element)
-  watching.observe(element)
-  watchedBy.set(element, watching)
+  if (!sighted()) return
+  if (watched.has(element)) {
+    recall(element)
+    return
+  }
+  watched.add(element)
+  arrivalCounts.watched++
+  sight(element, arrived)
+  setTimeout(() => {
+    if (element.isConnected && hidden(element)) recall(element)
+  }, 400)
 }
 
 export class FadeInEffect extends Effect {
@@ -665,14 +740,17 @@ export class FadeInEffect extends Effect {
         hide(element)
         watch(element)
       }
-    } else if (element.dataset.rearrive) {
-      const way = element.dataset.rearrive === 'aside' ? 'aside' : 'above'
+    } else if (element.dataset.rearrive || element.parentElement?.dataset.rearrive) {
+      const parent = element.parentElement
+      const way = (element.dataset.rearrive ?? parent?.dataset.rearrive) === 'aside' ? 'aside' : 'above'
       delete element.dataset.rearrive
+      if (parent?.dataset.rearrive) later(() => delete parent.dataset.rearrive)
       rehomed.delete(element)
-      if (!hidden(element) || slipped(element)) bring(element, way)
+      if (!hidden(element) || slipped(element)) bring(element, way, 0, true)
       else watch(element)
     } else {
-      if (rehomed.delete(element) && hidden(element)) watch(element)
+      rehomed.delete(element)
+      if (hidden(element)) watch(element)
       this.moved(element, component, scale, x, y, width, height)
     }
 
@@ -700,7 +778,7 @@ export class FadeInEffect extends Effect {
       if (slipped(element)) rearrive(element, true)
       return
     }
-    if (!walk(element, component, scale, this.x, this.y, x, y, width, height)) rearrive(element, true)
+    if (!walk(element, component, scale, this.x, this.y, x, y, width, height)) bring(element, 'aside', 0, true)
   }
 }
 
@@ -855,9 +933,7 @@ export class TransitionEffect extends Effect {
       this.scale = scale
       this.skipping = false
       setStyle(element, 'transition', 'none')
-      requestAnimationFrame(() =>
-        requestAnimationFrame(() => setStyle(element, 'transition', glide)),
-      )
+      laterStill(() => setStyle(element, 'transition', glide))
       return
     }
     setStyle(element, 'transition', glide)
@@ -882,6 +958,7 @@ const WASH_REACH = 58
 
 export class EdgeEffect extends Effect {
   private readonly colour: ColorConstraint
+  private readonly out: () => number
   private ink: Color | null = null
   private image = ''
   private where = 'left top'
@@ -889,12 +966,14 @@ export class EdgeEffect extends Effect {
   private drawn = NaN
 
   constructor(
-    private readonly out: State<number>,
+    out: number | boolean | State<number> | State<boolean>,
     colour: Color | State<Color>,
     private readonly side = 3,
     private readonly ends: 'left' | 'both' = 'left',
   ) {
     super()
+    const held = toState<number | boolean>(out)
+    this.out = () => Number(held.get())
     this.colour = new ConstantColorConstraint(colour)
   }
 
@@ -917,7 +996,7 @@ export class EdgeEffect extends Effect {
       this.drawn = scale
       this.placed = false
     }
-    const out = Math.max(0, Math.min(1, this.out.get()))
+    const out = Math.max(0, Math.min(1, this.out()))
     setStyle(
       element,
       'transition',
@@ -989,6 +1068,7 @@ export class ScrollEffect extends Effect {
     scrollers.add(element)
     element.dataset.scrolls = ''
     setStyle(element, 'overflow', 'hidden auto')
+    setStyle(element, 'will-change', 'transform')
     setStyle(element, 'overflow-anchor', 'none')
     setStyle(element, 'overscroll-behavior-y', 'none')
 
@@ -1034,25 +1114,100 @@ export class ScrollEffect extends Effect {
   }
 }
 
-const lit = new Set<HTMLElement>()
-let onScreen: IntersectionObserver | null = null
 const pointer = { x: -1e4, y: -1e4 }
 
 let wanted = false
 
+interface Lit {
+  component: Placed
+  scale: number
+  scroller: HTMLElement | null
+  lamps: HTMLElement[]
+  near: boolean
+}
+
+export interface Placed {
+  getLeft(): number
+  getTop(): number
+  getWidth(): number
+  getHeight(): number
+}
+
+const lit = new Map<HTMLElement, Lit>()
+const onLight = new WeakMap<HTMLElement, Lit>()
+const scrollerOf = new WeakMap<HTMLElement, HTMLElement | null>()
+
+const origin = { x: 0, y: 0 }
+export const lightFrom = (x: number, y: number): void => {
+  origin.x = x
+  origin.y = y
+}
+
+function scrollerAbove(element: HTMLElement): HTMLElement | null {
+  let scroller = scrollerOf.get(element)
+  if (scroller === undefined) {
+    scroller = null
+    for (let up = element.parentElement; up; up = up.parentElement) {
+      if (scrollers.has(up)) {
+        scroller = up
+        break
+      }
+    }
+    scrollerOf.set(element, scroller)
+  }
+  return scroller
+}
+
+const seen = { left: 0, top: 0, right: 0, bottom: 0 }
+
+function boxOf(held: Lit): typeof seen {
+  const { component, scale } = held
+  const shift = held.scroller ? scrollMetrics(held.scroller).top : 0
+  seen.left = origin.x + component.getLeft() * scale
+  seen.top = origin.y + component.getTop() * scale - shift
+  seen.right = seen.left + component.getWidth() * scale
+  seen.bottom = seen.top + component.getHeight() * scale
+  return seen
+}
+
+let resting = false
+let easing = false
+let restTimer: ReturnType<typeof setTimeout> | undefined
+
+const scrolledUnderLight = (): void => {
+  resting = true
+  clearTimeout(restTimer)
+  restTimer = setTimeout(() => {
+    resting = false
+    easing = true
+    wanted = true
+  }, SCROLLING_FOR)
+}
+
 export const shine = (): void => {
   if (!wanted || !lighting) return
   wanted = false
-  for (const element of lit) {
-    const box = element.getBoundingClientRect()
+  const eased = easing
+  easing = false
+  for (const held of lit.values()) {
+    const box = boxOf(held)
     const dx = Math.max(box.left - pointer.x, 0, pointer.x - box.right)
     const dy = Math.max(box.top - pointer.y, 0, pointer.y - box.bottom)
     const near = dx * dx + dy * dy < REACH * REACH
-    if (near) {
-      setStyle(element, '--mx', `${pointer.x - box.left}px`)
-      setStyle(element, '--my', `${pointer.y - box.top}px`)
+    if (resting && near && held.near) continue
+    held.near = near
+    for (const lamp of held.lamps) {
+      if (near) {
+        if (eased) {
+          lamp.classList.add('easing')
+          setTimeout(() => lamp.classList.remove('easing'), 300)
+        }
+        setStyle(lamp, '--mx', `${pointer.x - box.left}px`)
+        setStyle(lamp, '--my', `${pointer.y - box.top}px`)
+      }
+      setStyle(lamp, '--lit', near ? '1' : '0')
+      lamp.classList.toggle('on', near)
     }
-    setStyle(element, '--lit', near ? '1' : '0')
   }
 }
 
@@ -1067,51 +1222,157 @@ export const setLight = (on: boolean): void => {
   if (on || typeof document === 'undefined') return
   for (const element of document.querySelectorAll('.lit')) {
     setStyle(element as HTMLElement, '--lit', '0')
+    element.classList.remove('on')
   }
 }
 
-function track(): IntersectionObserver | null {
-  if (onScreen !== null || typeof IntersectionObserver === 'undefined') return onScreen
-  onScreen = new IntersectionObserver((entries) => {
-    for (const entry of entries) {
-      const element = entry.target as HTMLElement
-      if (entry.isIntersecting) lit.add(element)
-      else {
-        lit.delete(element)
-        setStyle(element, '--lit', '0')
-      }
-    }
-    queueShine()
-  })
+let tracking = false
+
+function track(): void {
+  if (tracking || typeof addEventListener !== 'function') return
+  tracking = true
   addEventListener(
     'pointermove',
     (event) => {
       pointer.x = event.clientX
       pointer.y = event.clientY
+      resting = false
       queueShine()
     },
     { passive: true },
   )
-  addEventListener('scroll', queueShine, { capture: true, passive: true })
-  return onScreen
+  addEventListener('scroll', scrolledUnderLight, { capture: true, passive: true })
 }
 
-export class LightEffect extends Effect {
-  private armed = false
+export class GlareEffect extends Effect {
+  constructor(
+    private readonly colour: State<Color>,
+    private readonly strength = 0.8,
+    private readonly reach = 9,
+  ) {
+    super()
+  }
 
-  constructor(private readonly colour: State<Color>) {
+  override apply(element: HTMLElement, _component: UIComponent, scale: number): void {
+    const light = this.colour.get()
+    const at = (share: number): string => toCss(withAlpha(light, Math.round(255 * this.strength * share)))
+    const far = this.reach * scale
+    setStyle(
+      element,
+      'text-shadow',
+      `0 0 ${(far / 4).toFixed(1)}px ${at(0.9)}, 0 0 ${(far / 2).toFixed(1)}px ${at(0.45)}, 0 0 ${far.toFixed(1)}px ${at(0.2)}`,
+    )
+  }
+}
+
+export class ShineEffect extends Effect {
+  constructor(
+    private readonly colours: readonly State<Color>[],
+    private readonly angle = 100,
+    private readonly size = 1,
+    private readonly shadow = true,
+  ) {
+    super()
+  }
+
+  override apply(element: HTMLElement, _component: UIComponent, scale: number): void {
+    const stops = this.colours
+      .map((colour, at) => {
+        const along = this.colours.length === 1 ? 0 : (at / (this.colours.length - 1)) * 100
+        return `${toCss(colour.get())} ${Math.round(along)}%`
+      })
+      .join(', ')
+    setStyle(element, 'background-image', `linear-gradient(${this.angle}deg, ${stops})`)
+    setStyle(element, 'background-clip', 'text')
+    setStyle(element, '-webkit-background-clip', 'text')
+    setStyle(element, 'color', 'transparent')
+    setStyle(element, '-webkit-text-fill-color', 'transparent')
+    const pixel = this.size * scale
+    setStyle(
+      element,
+      'text-shadow',
+      this.shadow ? `${pixel}px ${pixel}px 0 ${toCss(shadowOf(this.colours[0].get()))}` : 'none',
+    )
+  }
+}
+
+export class GlowEffect extends Effect {
+  constructor(
+    private readonly colour: State<Color>,
+    private readonly strength: number = 0.55,
+  ) {
     super()
   }
 
   override apply(element: HTMLElement): void {
+    style()
+    element.classList.add('halo')
+    const light = this.colour.get()
+    const at = (share: number): string => toCss(withAlpha(light, Math.round(230 * this.strength * share)))
+    setStyle(element, '--halo-core', at(1))
+    setStyle(element, '--halo-mid', at(0.42))
+    setStyle(element, '--halo-soft', at(0.2))
+    setStyle(element, '--halo-far', at(0.08))
+    setStyle(element, '--halo-edge', at(0.02))
+  }
+}
+
+export type LightPart = 'halo' | 'rim' | 'both'
+
+const lights = new WeakMap<Element, Lit>()
+
+export class LightEffect extends Effect {
+  private armed = false
+
+  constructor(
+    private readonly colour: State<Color>,
+    private readonly part: LightPart = 'both',
+  ) {
+    super()
+  }
+
+  override apply(element: HTMLElement, component: UIComponent, scale: number): void {
     if (touch) return
-    setStyle(element, '--glow', toCss(withAlpha(this.colour.get(), 26)))
-    setStyle(element, '--rim', toCss(withAlpha(this.colour.get(), 150)))
+    const anchor = cardOf(component) ?? element
+    let held = lights.get(anchor)
+    const fresh = !held
+    if (held) {
+      held.scale = scale
+      held.scroller = scrollerAbove(element)
+      if (!held.lamps.includes(element)) held.lamps.push(element)
+    } else {
+      style()
+      held = { component, scale, scroller: scrollerAbove(element), lamps: [element], near: false }
+      lights.set(anchor, held)
+    }
+    if (!onLight.has(element)) {
+      element.classList.add('lit')
+      if (this.part !== 'rim') element.classList.add('halo')
+      if (this.part !== 'halo') element.classList.add('rim')
+      onLight.set(element, held)
+    }
+    if (this.part !== 'rim') setStyle(element, '--glow', toCss(withAlpha(this.colour.get(), 26)))
+    if (this.part !== 'halo') setStyle(element, '--rim', toCss(withAlpha(this.colour.get(), 150)))
     if (this.armed) return
     this.armed = true
-    style()
-    element.classList.add('lit')
-    track()?.observe(element)
+    track()
+    if (!fresh) return
+    const seen = held
+    if (!sighted()) return
+    sight(anchor, (entry) => {
+      if (entry.isIntersecting) lit.set(anchor, seen)
+      else {
+        lit.delete(anchor)
+        later(() => {
+          for (const lamp of seen.lamps) {
+            setStyle(lamp, '--lit', '0')
+            lamp.classList.remove('on')
+          }
+          seen.near = false
+        })
+      }
+      queueShine()
+    })
   }
 }
 
@@ -1188,8 +1449,27 @@ export class PointEffect extends Effect {
     if (now && !this.was && motion) {
       style()
       element.classList.remove('pointed')
-      void element.offsetWidth
-      element.classList.add('pointed')
+      later(() => element.classList.add('pointed'))
+    }
+    this.was = now
+  }
+}
+
+export class NudgeEffect extends Effect {
+  private was = 0
+
+  constructor(private readonly times: State<number>) {
+    super()
+  }
+
+  override apply(element: HTMLElement): void {
+    const now = this.times.get()
+    setStyle(element, 'opacity', '0')
+    setStyle(element, 'pointer-events', 'none')
+    if (now !== this.was && now > 0 && motion) {
+      style()
+      element.classList.remove('nudged')
+      later(() => element.classList.add('nudged'))
     }
     this.was = now
   }
